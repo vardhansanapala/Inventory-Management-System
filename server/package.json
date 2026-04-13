@@ -1,0 +1,24 @@
+{
+  "name": "asset-inventory-server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "worker": "node src/workers/bulkImport.worker.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.799.0",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.49.1",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ioredis": "^5.6.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.12.2",
+    "multer": "^1.4.5-lts.1",
+    "qrcode": "^1.5.4"
+  }
+}

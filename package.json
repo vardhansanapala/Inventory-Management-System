@@ -1,0 +1,16 @@
+{
+  "name": "asset-inventory-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "build:client": "npm --workspace client run build",
+    "start:server": "npm --workspace server run start"
+  }
+}
+

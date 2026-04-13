@@ -40,22 +40,46 @@ async function assertCreationRefs({ productId, locationId, assignedToId, perform
   return { product, location, assignedTo, performedBy };
 }
 
-async function buildAssetQrFields(asset) {
-  const qrValue = buildAssetQrValue(asset.assetId);
-  const deepLink = buildAssetScanUrl(asset.assetId);
-  const qrBuffer = await generateQrPngBuffer(qrValue);
-  const uploadKey = `qrcodes/${asset.assetId}.png`;
+async function buildAssetQrFields(assetId) {
+  const qrCode = buildAssetQrValue(assetId);
+  const qrBuffer = await generateQrPngBuffer(qrCode);
+  const uploadKey = `qrcodes/${assetId}.png`;
   const uploaded = await uploadQrCodeBuffer({
     key: uploadKey,
     buffer: qrBuffer,
   });
 
   return {
-    qrValue,
+    qrCode,
     uploadKey: uploaded.key,
     qrCodeUrl: uploaded.url,
-    qrDeepLink: deepLink,
+    qrDeepLink: buildAssetScanUrl(assetId),
   };
+}
+
+function applyAssetQrFields(asset, qrFields) {
+  asset.qrCode = qrFields.qrCode;
+  asset.qrCodeUrl = qrFields.qrCodeUrl;
+  asset.qrStorageKey = qrFields.uploadKey;
+  asset.qrDeepLink = qrFields.qrDeepLink;
+}
+
+function clearAssetQrFields(asset) {
+  asset.qrCode = "";
+  asset.qrCodeUrl = "";
+  asset.qrStorageKey = "";
+  asset.qrDeepLink = "";
+}
+
+async function regenerateAssetQr(asset, session) {
+  if (!asset?.assetId) {
+    throw new ApiError(400, "Asset ID is required before regenerating a QR code");
+  }
+
+  const qrFields = await buildAssetQrFields(asset.assetId);
+  applyAssetQrFields(asset, qrFields);
+  await asset.save({ session });
+  return qrFields;
 }
 
 async function createAssetWithQr({
@@ -91,20 +115,15 @@ async function createAssetWithQr({
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await ensureAssetId(asset, session);
-    qrFields = await buildAssetQrFields(asset);
+    qrFields = await buildAssetQrFields(asset.assetId);
 
     try {
-      asset.qrCodeUrl = qrFields.qrCodeUrl;
-      asset.qrStorageKey = qrFields.uploadKey;
-      asset.qrDeepLink = qrFields.qrDeepLink;
-
+      applyAssetQrFields(asset, qrFields);
       await asset.save({ session });
       break;
     } catch (error) {
       await deleteObjectIfExists(qrFields.uploadKey);
-      asset.qrCodeUrl = "";
-      asset.qrStorageKey = "";
-      asset.qrDeepLink = "";
+      clearAssetQrFields(asset);
 
       if (isDuplicateAssetIdError(error) && attempt < 2) {
         asset.assetId = "";
@@ -143,7 +162,7 @@ async function createAssetWithQr({
           metadata: {
             productId: String(asset.product),
             assetId: asset.assetId,
-            qrValue: qrFields.qrValue,
+            qrCode: qrFields.qrCode,
             qrDeepLink: asset.qrDeepLink,
           },
           timestamp: new Date(),
@@ -164,5 +183,6 @@ async function createAssetWithQr({
 }
 
 module.exports = {
+  regenerateAssetQr,
   createAssetWithQr,
 };

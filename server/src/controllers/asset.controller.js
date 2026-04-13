@@ -3,14 +3,25 @@ const { ACTION_REASONS } = require("../constants/asset.constants");
 const { Asset } = require("../models/Asset");
 const { AuditLog } = require("../models/AuditLog");
 const { Product } = require("../models/Product");
-const { buildAssetQrValue, generateQrPngBuffer } = require("../services/qr.service");
+const { buildAssetQrValue, generateQrPngBuffer, normalizeAssetId } = require("../services/qr.service");
 const { ApiError } = require("../utils/ApiError");
-const { createAssetWithQr } = require("../services/assetCreation.service");
+const { createAssetWithQr, regenerateAssetQr } = require("../services/assetCreation.service");
 const { deleteObjectIfExists } = require("../services/s3.service");
 const { applyAssetAction } = require("../services/assetAction.service");
 
 function resolveActorId(req) {
   return req.user?._id || req.body.performedById;
+}
+
+function serializeAsset(asset) {
+  const payload = asset.toObject ? asset.toObject() : { ...asset };
+  const qrCode = payload.qrCode || buildAssetQrValue(payload.assetId);
+
+  return {
+    ...payload,
+    qrCode,
+    qrDeepLink: payload.qrDeepLink || qrCode,
+  };
 }
 
 async function listAssets(req, res) {
@@ -48,7 +59,7 @@ async function listAssets(req, res) {
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
 
-  res.json(assets);
+  res.json(assets.map(serializeAsset));
 }
 
 function buildAssetLookupQuery(identifier) {
@@ -60,11 +71,11 @@ function buildAssetLookupQuery(identifier) {
 
   return isValidObjectId(normalizedIdentifier)
     ? { _id: normalizedIdentifier, isDeleted: false }
-    : { assetId: normalizedIdentifier.toUpperCase(), isDeleted: false };
+    : { assetId: normalizeAssetId(normalizedIdentifier), isDeleted: false };
 }
 
 async function getAssetById(req, res) {
-  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.id))
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
@@ -73,11 +84,11 @@ async function getAssetById(req, res) {
     throw new ApiError(404, "Asset not found");
   }
 
-  res.json(asset);
+  res.json(serializeAsset(asset));
 }
 
 async function getDeviceByIdPublic(req, res) {
-  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.id))
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
@@ -86,11 +97,11 @@ async function getDeviceByIdPublic(req, res) {
     throw new ApiError(404, "Asset not found");
   }
 
-  res.json(asset);
+  res.json(serializeAsset(asset));
 }
 
 async function getAssetQrCode(req, res) {
-  const assetId = String(req.params.assetCode || "").trim().toUpperCase();
+  const assetId = normalizeAssetId(req.params.assetId);
 
   const asset = await Asset.findOne({
     assetId,
@@ -109,9 +120,43 @@ async function getAssetQrCode(req, res) {
   res.send(buffer);
 }
 
+async function regenerateAssetQrCode(req, res) {
+  const session = await startSession();
+
+  try {
+    session.startTransaction();
+
+    const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).session(session);
+    if (!asset) {
+      throw new ApiError(404, "Asset not found");
+    }
+
+    await regenerateAssetQr(asset, session);
+    await session.commitTransaction();
+
+    const refreshedAsset = await Asset.findById(asset._id)
+      .populate("product")
+      .populate("location")
+      .populate("assignedTo", "firstName lastName email");
+
+    res.json(serializeAsset(refreshedAsset));
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+}
+
 async function getAssetAuditLogs(req, res) {
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).select("_id");
+
+  if (!asset) {
+    throw new ApiError(404, "Asset not found");
+  }
+
   const logs = await AuditLog.find({
-    asset: req.params.id,
+    asset: asset._id,
     isDeleted: false,
   })
     .sort({ createdAt: -1 })
@@ -149,7 +194,7 @@ async function createAsset(req, res) {
       .populate("location")
       .populate("assignedTo", "firstName lastName email");
 
-    res.status(201).json(asset);
+    res.status(201).json(serializeAsset(asset));
   } catch (error) {
     await session.abortTransaction();
     await deleteObjectIfExists(uploadKey);
@@ -173,7 +218,7 @@ async function performAssetAction(req, res) {
     session.startTransaction();
 
     const result = await applyAssetAction({
-      assetIdentifier: req.params.id,
+      assetIdentifier: req.params.assetId,
       action: req.body.action,
       performedById,
       reason: req.body.reason || ACTION_REASONS.OTHER,
@@ -203,7 +248,7 @@ async function performAssetAction(req, res) {
 
     return res.json({
       duplicate: false,
-      asset,
+      asset: serializeAsset(asset),
       auditLogId: result.auditLog._id,
     });
   } catch (error) {
@@ -219,6 +264,7 @@ module.exports = {
   getAssetById,
   getDeviceByIdPublic,
   getAssetQrCode,
+  regenerateAssetQrCode,
   getAssetAuditLogs,
   createAsset,
   performAssetAction,

@@ -34,10 +34,10 @@ export function DashboardPage() {
       </section>
 
       <div className="stats-grid">
-        <StatCard label="Total Assets" value={summary.totalAssets} />
-        <StatCard label="Open Repairs" value={summary.openRepairs} accent="forest" />
-        <StatCard label="Available" value={summary.statusBreakdown.AVAILABLE || 0} accent="sun" />
-        <StatCard label="Assigned" value={summary.statusBreakdown.ASSIGNED || 0} accent="ink" />
+        <StatCard label="Total Assets : " value={summary.totalAssets} />
+        <StatCard label="In Repairs : " value={summary.openRepairs} accent="forest" />
+        <StatCard label="Available : " value={summary.statusBreakdown.AVAILABLE || 0} accent="sun" />
+        <StatCard label="Assigned : " value={summary.statusBreakdown.ASSIGNED || 0} accent="ink" />
       </div>
 
       <SectionCard title="Status Breakdown" subtitle="Current status counts across all assets">

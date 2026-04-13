@@ -86,19 +86,25 @@ export function createAsset(payload) {
 }
 
 export function getAssetById(assetId) {
-  return request(`/assets/${assetId}`);
+  return request(`/assets/${encodeURIComponent(assetId)}`);
+}
+
+export function regenerateAssetQr(assetId) {
+  return request(`/assets/${encodeURIComponent(assetId)}/regenerate-qr`, {
+    method: "POST",
+  });
 }
 
 export function getDeviceById(assetId) {
-  return request(`/devices/${assetId}`);
+  return request(`/devices/${encodeURIComponent(assetId)}`);
 }
 
 export function getAssetAuditLogs(assetId) {
-  return request(`/assets/${assetId}/audit-logs`);
+  return request(`/assets/${encodeURIComponent(assetId)}/audit-logs`);
 }
 
 export function performAssetAction(assetId, payload) {
-  return request(`/assets/${assetId}/action`, {
+  return request(`/assets/${encodeURIComponent(assetId)}/action`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -115,13 +121,13 @@ export function uploadAssetCsv({ file, performedById }) {
   });
 }
 
-export async function getAssetQrBlobUrl(assetCode) {
-  const normalizedAssetCode = String(assetCode || "").trim().toUpperCase();
+export async function getAssetQrBlobUrl(assetId) {
+  const normalizedAssetId = String(assetId || "").trim().toUpperCase();
 
-  if (!normalizedAssetCode) {
+  if (!normalizedAssetId) {
     return "";
   }
 
-  const blob = await requestBlob(`/assets/qr/${encodeURIComponent(normalizedAssetCode)}`);
+  const blob = await requestBlob(`/assets/qr/${encodeURIComponent(normalizedAssetId)}`);
   return URL.createObjectURL(blob);
 }

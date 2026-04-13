@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Html5Qrcode } from "html5-qrcode";
 import {
   createAsset,
   getAssetAuditLogs,
@@ -7,6 +8,7 @@ import {
   getAssetQrBlobUrl,
   listAssets,
   performAssetAction,
+  regenerateAssetQr,
   uploadAssetCsv,
 } from "../api/inventory";
 import { SectionCard } from "../components/SectionCard";
@@ -17,7 +19,8 @@ import {
   getReasonOptions,
   getValidActionsForStatus,
 } from "../constants/assetWorkflow";
-import { buildScanUrl, extractAssetId } from "../utils/scan";
+import { getAssetId, getAssetScanUrl } from "../utils/asset.util";
+import { extractAssetId } from "../utils/qrParser.util";
 const sectionTabs = [
   { id: "registry", title: "Device Registry", subtitle: "Browse and select devices" },
   { id: "add", title: "Add Device", subtitle: "Create and preview QR inline" },
@@ -29,13 +32,13 @@ function normalizeTab(tabValue) {
   return validSectionTabs.has(tabValue) ? tabValue : "registry";
 }
 
-function AssetReference({ assetCode, copied, onCopy }) {
+function AssetReference({ assetId, copied, onCopy }) {
   return (
     <div className="asset-reference">
       <span>Asset ID</span>
       <div className="asset-reference-row">
-        <code>{assetCode || "-"}</code>
-        <button className="button ghost" type="button" onClick={onCopy} disabled={!assetCode}>
+        <code>{assetId || "-"}</code>
+        <button className="button ghost" type="button" onClick={onCopy} disabled={!assetId}>
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
@@ -43,8 +46,18 @@ function AssetReference({ assetCode, copied, onCopy }) {
   );
 }
 
-function QrPreviewPanel({ asset, qrImageUrl, qrLoading, qrError, copiedAssetId, onCopyAssetId }) {
-  const scanUrl = buildScanUrl(asset?.assetCode);
+function QrPreviewPanel({
+  asset,
+  qrImageUrl,
+  qrLoading,
+  qrError,
+  copiedAssetId,
+  onCopyAssetId,
+  onRegenerateQr,
+  regeneratingQr = false,
+}) {
+  const assetId = getAssetId(asset);
+  const scanUrl = getAssetScanUrl(asset);
 
   if (!asset) {
     return <div className="empty-state">Create or select a device to load its QR preview and copyable asset ID.</div>;
@@ -55,21 +68,28 @@ function QrPreviewPanel({ asset, qrImageUrl, qrLoading, qrError, copiedAssetId, 
       <div className="qr-panel-header">
         <div>
           <p className="qr-title">Generated QR</p>
-          <strong>{asset.assetCode}</strong>
+          <strong>{assetId}</strong>
         </div>
-        <StatusPill status={asset.status} />
+        <div className="registry-actions">
+          {onRegenerateQr ? (
+            <button className="button ghost" type="button" onClick={onRegenerateQr} disabled={regeneratingQr}>
+              {regeneratingQr ? "Regenerating..." : "Regenerate QR"}
+            </button>
+          ) : null}
+          <StatusPill status={asset.status} />
+        </div>
       </div>
 
       {qrLoading ? <div className="page-message">Fetching QR with your authenticated session...</div> : null}
       {qrError ? <div className="page-message error">{qrError}</div> : null}
-      {qrImageUrl ? <img className="qr-preview" src={qrImageUrl} alt={`QR for ${asset.assetCode}`} /> : <div className="qr-placeholder">QR preview will appear here as soon as it is available.</div>}
+      {qrImageUrl ? <img className="qr-preview" src={qrImageUrl} alt={`QR for ${assetId}`} /> : <div className="qr-placeholder">QR preview will appear here as soon as it is available.</div>}
+      {qrImageUrl ? (
+        <a className="button ghost" href={qrImageUrl} download={`${assetId}-qr.png`}>
+          Download QR
+        </a>
+      ) : null}
 
-      <AssetReference assetCode={asset.assetCode} copied={copiedAssetId} onCopy={onCopyAssetId} />
-
-      <div className="detail-item">
-        <span>QR Encoded Value</span>
-        <strong className="scan-link-label">{asset.assetCode}</strong>
-      </div>
+      <AssetReference assetId={assetId} copied={copiedAssetId} onCopy={onCopyAssetId} />
 
       <div className="detail-item">
         <span>Scan URL</span>
@@ -103,18 +123,22 @@ export function AssetsPage({ setupData }) {
   const [selectedAssetQrUrl, setSelectedAssetQrUrl] = useState("");
   const [selectedAssetQrLoading, setSelectedAssetQrLoading] = useState(false);
   const [selectedAssetQrError, setSelectedAssetQrError] = useState("");
+  const [selectedAssetQrRegenerating, setSelectedAssetQrRegenerating] = useState(false);
   const [createdAssetQrUrl, setCreatedAssetQrUrl] = useState("");
   const [createdAssetQrLoading, setCreatedAssetQrLoading] = useState(false);
   const [createdAssetQrError, setCreatedAssetQrError] = useState("");
+  const [createdAssetQrRegenerating, setCreatedAssetQrRegenerating] = useState(false);
   const [copiedAssetId, setCopiedAssetId] = useState("");
   const [assignMode, setAssignMode] = useState("scan");
   const [assignLookupInput, setAssignLookupInput] = useState("");
   const [assignLookupBusy, setAssignLookupBusy] = useState(false);
   const [scanError, setScanError] = useState("");
   const [scanStatus, setScanStatus] = useState("idle");
+  const [scanEngine, setScanEngine] = useState("native");
   const [lastDecodedValue, setLastDecodedValue] = useState("");
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const html5ScannerRef = useRef(null);
   const assignInputRef = useRef(null);
   const streamRef = useRef(null);
   const frameRequestRef = useRef(null);
@@ -141,10 +165,10 @@ export function AssetsPage({ setupData }) {
     selectedAsset?.status === ASSET_STATUSES.AVAILABLE && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE;
   const selectedAssetRequiresAssignee = actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE;
 
-  async function copyAssetId(assetCode) {
-    if (!assetCode || !navigator?.clipboard?.writeText) return;
-    await navigator.clipboard.writeText(assetCode);
-    setCopiedAssetId(assetCode);
+  async function copyAssetId(assetId) {
+    if (!assetId || !navigator?.clipboard?.writeText) return;
+    await navigator.clipboard.writeText(assetId);
+    setCopiedAssetId(assetId);
     window.clearTimeout(copyTimeoutRef.current);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedAssetId(""), 1800);
   }
@@ -172,10 +196,10 @@ export function AssetsPage({ setupData }) {
       .catch((err) => setError(err.message));
   }
 
-  async function loadQrPreview(assetCode, setters) {
+  async function loadQrPreview(assetId, setters) {
     const { setLoading, setQrUrl, setQrError } = setters;
 
-    if (!assetCode) {
+    if (!assetId) {
       setQrUrl("");
       setQrError("");
       setLoading(false);
@@ -186,7 +210,7 @@ export function AssetsPage({ setupData }) {
     setQrError("");
 
     try {
-      const qrUrl = await getAssetQrBlobUrl(assetCode);
+      const qrUrl = await getAssetQrBlobUrl(assetId);
       setQrUrl((currentUrl) => {
         if (currentUrl) URL.revokeObjectURL(currentUrl);
         return qrUrl;
@@ -202,15 +226,75 @@ export function AssetsPage({ setupData }) {
     }
   }
 
+  function getQrPreviewSetters(target) {
+    return target === "selected"
+      ? {
+          setLoading: setSelectedAssetQrLoading,
+          setQrUrl: setSelectedAssetQrUrl,
+          setQrError: setSelectedAssetQrError,
+        }
+      : {
+          setLoading: setCreatedAssetQrLoading,
+          setQrUrl: setCreatedAssetQrUrl,
+          setQrError: setCreatedAssetQrError,
+        };
+  }
+
+  async function refreshQrPreview(target, assetId) {
+    await loadQrPreview(assetId, getQrPreviewSetters(target));
+  }
+
   async function applySelectedAsset(asset, selectionMessage) {
     const logs = await getAssetAuditLogs(asset._id);
+    const assetId = getAssetId(asset);
     setSelectedAssetId(asset._id);
     setSelectedAsset(asset);
     setAssetLogs(logs);
-    setAssignLookupInput(asset.assetCode);
+    setAssignLookupInput(assetId);
 
     if (selectionMessage) {
       setMessage(selectionMessage);
+    }
+  }
+
+  async function handleRegenerateQr(asset, target) {
+    if (!asset?._id) {
+      return;
+    }
+
+    const setRegenerating = target === "selected" ? setSelectedAssetQrRegenerating : setCreatedAssetQrRegenerating;
+    setRegenerating(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const refreshedAsset = await regenerateAssetQr(asset._id);
+
+      const isSelectedAsset = selectedAssetId === refreshedAsset._id;
+      const isLatestCreatedAsset = latestCreatedAsset?._id === refreshedAsset._id;
+
+      if (target === "selected" || isSelectedAsset) {
+        setSelectedAsset(refreshedAsset);
+      }
+
+      if (target === "created" || isLatestCreatedAsset) {
+        setLatestCreatedAsset(refreshedAsset);
+      }
+
+      if (isSelectedAsset) {
+        await refreshQrPreview("selected", getAssetId(refreshedAsset));
+      }
+
+      if (isLatestCreatedAsset) {
+        await refreshQrPreview("created", getAssetId(refreshedAsset));
+      } else {
+        await refreshQrPreview(target, getAssetId(refreshedAsset));
+      }
+      setMessage(`QR regenerated for ${getAssetId(refreshedAsset)}.`);
+    } catch (err) {
+      setError(err.message || "Unable to regenerate the QR code.");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -219,7 +303,7 @@ export function AssetsPage({ setupData }) {
 
     try {
       const asset = await getAssetById(assetId);
-      await applySelectedAsset(asset, `Selected ${asset.assetCode}. Actions now apply only to this device.`);
+      await applySelectedAsset(asset, `Selected ${getAssetId(asset)}. Actions now apply only to this device.`);
     } catch (err) {
       setError(err.message);
     }
@@ -230,11 +314,12 @@ export function AssetsPage({ setupData }) {
     if (!assetIdentifier) throw new Error("Enter a valid asset ID or scan URL.");
 
     const asset = await getAssetById(assetIdentifier);
-    const registrySearch = assets.some((item) => item._id === asset._id) ? search : asset.assetCode;
-    setAssignLookupInput(asset.assetCode);
+    const resolvedAssetId = getAssetId(asset);
+    const registrySearch = assets.some((item) => item._id === asset._id) ? search : resolvedAssetId;
+    setAssignLookupInput(resolvedAssetId);
     setSearch(registrySearch);
     await loadAssets(registrySearch ? { search: registrySearch } : {});
-    await applySelectedAsset(asset, `${asset.assetCode} is now selected from ${sourceLabel}.`);
+    await applySelectedAsset(asset, `${resolvedAssetId} is now selected from ${sourceLabel}.`);
     return asset;
   }
 
@@ -268,6 +353,12 @@ export function AssetsPage({ setupData }) {
       streamRef.current = null;
     }
 
+    if (html5ScannerRef.current) {
+      html5ScannerRef.current.stop().catch(() => {});
+      html5ScannerRef.current.clear().catch(() => {});
+      html5ScannerRef.current = null;
+    }
+
     if (videoRef.current) {
       videoRef.current.pause();
       videoRef.current.srcObject = null;
@@ -283,7 +374,6 @@ export function AssetsPage({ setupData }) {
 
   async function processScannedValue(decodedValue, sourceLabel) {
     const assetIdentifier = extractAssetId(decodedValue);
-    console.log("Scanned QR value:", decodedValue);
     setLastDecodedValue(decodedValue);
     setAssignLookupInput(assetIdentifier);
     setAssignLookupBusy(true);
@@ -347,6 +437,7 @@ export function AssetsPage({ setupData }) {
     setMessage("");
     setScanError("");
     setScanStatus("requesting");
+    setScanEngine("native");
     scanHandledRef.current = false;
 
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -354,33 +445,45 @@ export function AssetsPage({ setupData }) {
       return;
     }
 
-    if (!("BarcodeDetector" in window)) {
-      fallbackToManual("QR detection is not supported in this browser. Manual Asset ID entry has been enabled.");
-      return;
-    }
-
     try {
-      const supportedFormats = await window.BarcodeDetector.getSupportedFormats();
-      if (!supportedFormats.includes("qr_code")) {
-        fallbackToManual("QR detection is not available on this device. Manual Asset ID entry has been enabled.");
-        return;
+      if ("BarcodeDetector" in window) {
+        const supportedFormats = await window.BarcodeDetector.getSupportedFormats();
+        if (supportedFormats.includes("qr_code")) {
+          detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" } },
+            audio: false,
+          });
+
+          streamRef.current = stream;
+
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play();
+          }
+
+          setScanEngine("native");
+          setScanStatus("streaming");
+          frameRequestRef.current = window.requestAnimationFrame(detectQrCode);
+          return;
+        }
       }
 
-      detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
+      const scanner = new Html5Qrcode("assign-qr-reader");
+      html5ScannerRef.current = scanner;
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        async (decodedText) => {
+          if (scanHandledRef.current) return;
+          scanHandledRef.current = true;
+          setScanStatus("detected");
+          await processScannedValue(decodedText, "camera scan");
+        },
+        () => {}
+      );
+      setScanEngine("html5");
       setScanStatus("streaming");
-      frameRequestRef.current = window.requestAnimationFrame(detectQrCode);
     } catch (err) {
       fallbackToManual(getCameraErrorMessage(err));
     }
@@ -396,20 +499,20 @@ export function AssetsPage({ setupData }) {
   }, [searchParams]);
 
   useEffect(() => {
-    loadQrPreview(selectedAsset?.assetCode, {
+    loadQrPreview(getAssetId(selectedAsset), {
       setLoading: setSelectedAssetQrLoading,
       setQrUrl: setSelectedAssetQrUrl,
       setQrError: setSelectedAssetQrError,
     });
-  }, [selectedAsset?.assetCode]);
+  }, [selectedAsset]);
 
   useEffect(() => {
-    loadQrPreview(latestCreatedAsset?.assetCode, {
+    loadQrPreview(getAssetId(latestCreatedAsset), {
       setLoading: setCreatedAssetQrLoading,
       setQrUrl: setCreatedAssetQrUrl,
       setQrError: setCreatedAssetQrError,
     });
-  }, [latestCreatedAsset?.assetCode]);
+  }, [latestCreatedAsset]);
 
   useEffect(() => {
     if (activeTab !== "assign" || assignMode !== "scan") {
@@ -482,7 +585,7 @@ export function AssetsPage({ setupData }) {
     try {
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
-      setMessage(`Asset ${createdAsset.assetCode} created. QR is shown below in this section.`);
+      setMessage(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`);
       setCreateForm((current) => ({ ...current, productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" }));
       await loadAssets(search ? { search } : {});
       await handleSelectAsset(createdAsset._id);
@@ -493,7 +596,6 @@ export function AssetsPage({ setupData }) {
 
   async function handleAssignLookupSubmit(event) {
     event.preventDefault();
-    console.log("Manual Asset ID entered:", assignLookupInput);
     setAssignLookupBusy(true);
     setError("");
     setMessage("");
@@ -553,7 +655,7 @@ export function AssetsPage({ setupData }) {
       });
 
       setSelectedAsset(result.asset);
-      setMessage(`Action ${actionForm.action} completed for ${result.asset.assetCode}.`);
+      setMessage(`Action ${actionForm.action} completed for ${getAssetId(result.asset)}.`);
       await loadAssets(search ? { search } : {});
       const logs = await getAssetAuditLogs(selectedAssetId);
       setAssetLogs(logs);
@@ -606,7 +708,7 @@ export function AssetsPage({ setupData }) {
           actions={
             <div className="registry-actions">
               <form className="inline-form" onSubmit={openQuickAccess}>
-                <input className="input" placeholder="Quick Access: asset ID or /scan/:id URL" value={quickAccessId} onChange={(event) => setQuickAccessId(event.target.value)} />
+                <input className="input" placeholder="Quick Access: asset ID or /scan/:assetId URL" value={quickAccessId} onChange={(event) => setQuickAccessId(event.target.value)} />
                 <button className="button dark" type="submit">Open</button>
               </form>
               <form className="inline-form" onSubmit={(event) => { event.preventDefault(); loadAssets(search ? { search } : {}); }}>
@@ -632,7 +734,7 @@ export function AssetsPage({ setupData }) {
                 {assets.map((asset) => (
                   <tr key={asset._id} className={selectedAssetId === asset._id ? "selected-row" : ""} onClick={() => handleSelectAsset(asset._id)}>
                     <td>
-                      <strong>{asset.assetCode}</strong>
+                      <strong>{getAssetId(asset)}</strong>
                       <div className="table-subtle">{asset.serialNumber || "No serial number"}</div>
                     </td>
                     <td>{asset.product?.sku}</td>
@@ -689,8 +791,10 @@ export function AssetsPage({ setupData }) {
               qrImageUrl={createdAssetQrUrl}
               qrLoading={createdAssetQrLoading}
               qrError={createdAssetQrError}
-              copiedAssetId={copiedAssetId === latestCreatedAsset?.assetCode}
-              onCopyAssetId={() => copyAssetId(latestCreatedAsset?.assetCode)}
+              copiedAssetId={copiedAssetId === getAssetId(latestCreatedAsset)}
+              onCopyAssetId={() => copyAssetId(getAssetId(latestCreatedAsset))}
+              onRegenerateQr={() => handleRegenerateQr(latestCreatedAsset, "created")}
+              regeneratingQr={createdAssetQrRegenerating}
             />
           </div>
         </SectionCard>
@@ -733,9 +837,13 @@ export function AssetsPage({ setupData }) {
               {assignMode === "scan" ? (
                 <div className="scan-mode-panel">
                   <div className="scan-reader scan-video-shell">
-                    <video ref={videoRef} className="scan-video" autoPlay muted playsInline />
+                    {scanEngine === "native" ? (
+                      <video ref={videoRef} className="scan-video" autoPlay muted playsInline />
+                    ) : (
+                      <div id="assign-qr-reader" />
+                    )}
                   </div>
-                  <canvas ref={canvasRef} className="scan-canvas" />
+                  {scanEngine === "native" ? <canvas ref={canvasRef} className="scan-canvas" /> : null}
                   <p className="scan-help">
                     {scanStatus === "requesting"
                       ? "Requesting camera permission..."
@@ -760,7 +868,7 @@ export function AssetsPage({ setupData }) {
               <div className="device-detail-panel">
                 <div className="selected-asset-banner">
                   <span>Active Device</span>
-                  <strong>{selectedAsset.assetCode}</strong>
+                  <strong>{getAssetId(selectedAsset)}</strong>
                 </div>
 
                 <div className="device-summary-grid">
@@ -781,8 +889,10 @@ export function AssetsPage({ setupData }) {
                     qrImageUrl={selectedAssetQrUrl}
                     qrLoading={selectedAssetQrLoading}
                     qrError={selectedAssetQrError}
-                    copiedAssetId={copiedAssetId === selectedAsset?.assetCode}
-                    onCopyAssetId={() => copyAssetId(selectedAsset?.assetCode)}
+                    copiedAssetId={copiedAssetId === getAssetId(selectedAsset)}
+                    onCopyAssetId={() => copyAssetId(getAssetId(selectedAsset))}
+                    onRegenerateQr={() => handleRegenerateQr(selectedAsset, "selected")}
+                    regeneratingQr={selectedAssetQrRegenerating}
                   />
                 </div>
               </div>
@@ -794,7 +904,7 @@ export function AssetsPage({ setupData }) {
               <fieldset className="action-fieldset" disabled={!selectedAsset || !validActionOptions.length}>
                 <div className="selected-asset-banner">
                   <span>Action Target</span>
-                  <strong>{selectedAsset?.assetCode || "No device selected"}</strong>
+                  <strong>{getAssetId(selectedAsset) || "No device selected"}</strong>
                 </div>
 
                 {!selectedAsset ? <div className="action-hint">Choose a device first. This makes it obvious which asset the action will affect.</div> : null}

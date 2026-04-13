@@ -1,6 +1,10 @@
 const QRCode = require("qrcode");
 const env = require("../config/env");
 
+function normalizeAssetId(assetId) {
+  return String(assetId || "").trim().toUpperCase();
+}
+
 async function generateQrPngBuffer(text) {
   return QRCode.toBuffer(text, {
     type: "png",
@@ -10,16 +14,18 @@ async function generateQrPngBuffer(text) {
   });
 }
 
-function buildAssetQrValue(assetCode) {
-  return String(assetCode || "").trim().toUpperCase();
+function buildAssetQrValue(assetId) {
+  return buildAssetScanUrl(assetId);
 }
 
-function buildAssetScanUrl(assetCode) {
+function buildAssetScanUrl(assetId) {
   const baseUrl = String(env.qrDeepLinkBaseUrl || "http://localhost:5173/scan").replace(/\/+$/, "");
-  return `${baseUrl}/${encodeURIComponent(buildAssetQrValue(assetCode))}`;
+  const normalizedAssetId = normalizeAssetId(assetId);
+  return normalizedAssetId ? `${baseUrl}/${encodeURIComponent(normalizedAssetId)}` : "";
 }
 
 module.exports = {
+  normalizeAssetId,
   buildAssetQrValue,
   buildAssetScanUrl,
   generateQrPngBuffer,

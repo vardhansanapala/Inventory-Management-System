@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
-import { getDeviceById } from "../api/inventory";
+import { getAssetById } from "../api/inventory";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
-import { extractAssetId } from "../utils/scan";
+import { getAssetId, getAssetScanUrl } from "../utils/asset.util";
+import { extractAssetId } from "../utils/qrParser.util";
 
 export function ScanPage() {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { assetId } = useParams();
   const scannerRef = useRef(null);
   const scannerActiveRef = useRef(false);
   const scannerId = "qr-reader";
-  const [manualId, setManualId] = useState(id || "");
+  const [manualId, setManualId] = useState(assetId || "");
   const [scanError, setScanError] = useState("");
   const [asset, setAsset] = useState(null);
   const [assetError, setAssetError] = useState("");
@@ -26,15 +27,41 @@ export function ScanPage() {
     }
   }
 
+  function toScanErrorMessage(error) {
+    const rawMessage = String(error?.message || error || "").toLowerCase();
+
+    if (!window.isSecureContext) {
+      return "Camera needs a secure context (HTTPS or localhost). Open this app on localhost/HTTPS.";
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      return "Camera API is unavailable in this browser. Try Chrome/Edge on desktop or mobile.";
+    }
+
+    if (rawMessage.includes("notallowederror") || rawMessage.includes("permission denied")) {
+      return "Camera permission denied. Allow camera access in browser site permissions and retry.";
+    }
+
+    if (rawMessage.includes("notfounderror") || rawMessage.includes("requested device not found")) {
+      return "No camera device found. Connect a camera or use manual asset ID input.";
+    }
+
+    if (rawMessage.includes("notreadableerror") || rawMessage.includes("trackstarterror")) {
+      return "Camera is busy in another app/tab. Close other camera apps and retry.";
+    }
+
+    return "Camera access unavailable. Use manual input.";
+  }
+
   useEffect(() => {
-    setManualId(id || "");
-  }, [id]);
+    setManualId(assetId || "");
+  }, [assetId]);
 
   useEffect(() => {
     scannerActiveRef.current = false;
     setScanError("");
 
-    if (id) {
+    if (assetId) {
       stopScanner();
       return;
     }
@@ -43,39 +70,54 @@ export function ScanPage() {
     const scanner = new Html5Qrcode(scannerId);
     scannerRef.current = scanner;
 
-    scanner
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-          if (scannerActiveRef.current) {
-            return;
-          }
-
-          const assetId = extractAssetId(decodedText);
-          if (assetId) {
-            scannerActiveRef.current = true;
-            scanner.stop().catch(() => {});
-            navigate(`/scan/${assetId}`);
-          }
-        },
-        () => {}
-      )
-      .catch(() => {
-        if (isMounted) {
-          setScanError("Camera access unavailable. Use manual input.");
+    async function startScanner() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("MediaDevices unavailable");
         }
-      });
+
+        // Prompt camera permissions early so we can show accurate error states.
+        const warmupStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false,
+        });
+        warmupStream.getTracks().forEach((track) => track.stop());
+
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          (decodedText) => {
+            if (scannerActiveRef.current) {
+              return;
+            }
+
+            const scannedAssetId = extractAssetId(decodedText);
+            if (scannedAssetId) {
+              scannerActiveRef.current = true;
+              scanner.stop().catch(() => {});
+              navigate(`/scan/${scannedAssetId}`);
+            }
+          },
+          () => {}
+        );
+      } catch (error) {
+        if (isMounted) {
+          setScanError(toScanErrorMessage(error));
+        }
+      }
+    }
+
+    startScanner();
 
     return () => {
       isMounted = false;
       scannerActiveRef.current = false;
       stopScanner();
     };
-  }, [id, navigate]);
+  }, [assetId, navigate]);
 
   useEffect(() => {
-    if (!id) {
+    if (!assetId) {
       setAsset(null);
       setAssetError("");
       return;
@@ -83,32 +125,32 @@ export function ScanPage() {
 
     setLoadingAsset(true);
     setAssetError("");
-    getDeviceById(id)
+    getAssetById(assetId)
       .then((data) => setAsset(data))
       .catch((err) => {
         setAsset(null);
         setAssetError(err.message || "Device not found.");
       })
       .finally(() => setLoadingAsset(false));
-  }, [id]);
+  }, [assetId]);
 
   const handleManualSubmit = (event) => {
     event.preventDefault();
-    const assetId = extractAssetId(manualId);
-    if (!assetId) {
+    const nextAssetId = extractAssetId(manualId);
+    if (!nextAssetId) {
       setScanError("Enter a valid asset ID or scan URL.");
       return;
     }
 
     setScanError("");
-    navigate(`/scan/${assetId}`);
+    navigate(`/scan/${nextAssetId}`);
   };
 
   return (
     <div className="page-stack">
       <SectionCard title="Scan Device" subtitle="Use camera scan or manual asset ID input">
         {scanError ? <div className="page-message error">{scanError}</div> : null}
-        {!id ? <div id={scannerId} className="scan-reader" /> : null}
+        {!assetId ? <div id={scannerId} className="scan-reader" /> : null}
         <form className="inline-form" onSubmit={handleManualSubmit}>
           <input
             className="input"
@@ -122,15 +164,15 @@ export function ScanPage() {
         </form>
       </SectionCard>
 
-      {id ? (
-        <SectionCard title="Scanned Device Details" subtitle={`Asset ID: ${id}`}>
+      {assetId ? (
+        <SectionCard title="Scanned Device Details" subtitle={`Asset ID: ${assetId}`}>
           {loadingAsset ? (
             <div className="page-message">Loading device...</div>
           ) : asset ? (
             <div className="device-summary-grid">
               <div className="detail-item">
-                <span>Asset Code</span>
-                <strong>{asset.assetCode}</strong>
+                <span>Asset ID</span>
+                <strong>{getAssetId(asset)}</strong>
               </div>
               <div className="detail-item">
                 <span>Status</span>
@@ -151,6 +193,10 @@ export function ScanPage() {
                     ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}`
                     : "Unassigned"}
                 </strong>
+              </div>
+              <div className="detail-item">
+                <span>Scan URL</span>
+                <strong>{getAssetScanUrl(asset)}</strong>
               </div>
             </div>
           ) : (

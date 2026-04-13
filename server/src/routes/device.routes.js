@@ -4,7 +4,6 @@ const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
-router.get("/:id", asyncHandler(getDeviceByIdPublic));
+router.get("/:assetId", asyncHandler(getDeviceByIdPublic));
 
 module.exports = router;
-

@@ -6,6 +6,7 @@ const AssetSchema = new Schema(
   {
     assetId: {
       type: String,
+      required: true,
       unique: true,
       index: true,
       trim: true,
@@ -41,6 +42,11 @@ const AssetSchema = new Schema(
       index: true,
     },
     qrCodeUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    qrCode: {
       type: String,
       default: "",
       trim: true,

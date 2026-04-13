@@ -89,7 +89,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/scan" element={<ScanPage />} />
-        <Route path="/scan/:id" element={<ScanPage />} />
+        <Route path="/scan/:assetId" element={<ScanPage />} />
         <Route path="/" element={isAuthenticated ? <DashboardPage /> : <Navigate to="/login" replace />} />
         <Route
           path="/assets"

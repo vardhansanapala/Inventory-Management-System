@@ -1,5 +1,6 @@
 const express = require("express");
 const {
+  getAssetBootstrap,
   createAsset,
   getAssetById,
   getAssetAuditLogs,
@@ -9,15 +10,17 @@ const {
   regenerateAssetQrCode,
 } = require("../controllers/asset.controller");
 const { USER_ROLES } = require("../constants/asset.constants");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const { MODULE_KEYS } = require("../constants/permissions");
+const { requireAuth, requireModuleAccess, requireRole } = require("../middleware/auth");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
 router.get("/qr/:assetId", asyncHandler(getAssetQrCode));
-router.get("/:assetId", asyncHandler(getAssetById));
-router.use(requireAuth);
+router.use(requireAuth, requireModuleAccess(MODULE_KEYS.ASSETS));
+router.get("/bootstrap", asyncHandler(getAssetBootstrap));
 router.get("/", asyncHandler(listAssets));
+router.get("/:assetId", asyncHandler(getAssetById));
 router.post(
   "/",
   requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),

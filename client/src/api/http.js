@@ -20,9 +20,6 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const errorPayload = await response.json().catch(() => ({ message: "Request failed" }));
-    // #region agent log
-    fetch("http://127.0.0.1:7299/ingest/afc6bc82-97a6-4cba-b47f-6786dfde5c37", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "37ac0c" }, body: JSON.stringify({ sessionId: "37ac0c", runId: "pre-fix", hypothesisId: "H3", location: "http.js:25", message: "api response not ok", data: { path, status: response.status, hasAuthToken: Boolean(getAuthToken()), serverMessage: errorPayload.message || "Request failed" }, timestamp: Date.now() }) }).catch(() => {});
-    // #endregion
     throw new Error(errorPayload.message || "Request failed");
   }
 

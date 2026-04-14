@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   createAsset,
+  getAssetsBootstrap,
   getAssetAuditLogs,
   getAssetById,
   getAssetQrBlobUrl,
@@ -108,8 +109,16 @@ function getCameraErrorMessage(error) {
   return error?.message || "Unable to start the camera. Manual Asset ID entry has been enabled.";
 }
 
-export function AssetsPage({ setupData }) {
+const emptySetupData = {
+  products: [],
+  locations: [],
+  users: [],
+};
+
+export function AssetsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [setupData, setSetupData] = useState(emptySetupData);
+  const [setupLoading, setSetupLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() => normalizeTab(searchParams.get("tab")));
   const [assets, setAssets] = useState([]);
   const [assetLogs, setAssetLogs] = useState([]);
@@ -145,14 +154,13 @@ export function AssetsPage({ setupData }) {
   const detectorRef = useRef(null);
   const scanHandledRef = useRef(false);
   const copyTimeoutRef = useRef(null);
-  const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", performedById: "", notes: "" });
+  const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
   const [actionForm, setActionForm] = useState({
     action: ASSET_ACTIONS.ASSIGN_DEVICE,
     reason: "OTHER",
     customReason: "",
     locationId: "",
     assignedToId: "",
-    performedById: "",
     notes: "",
     issue: "",
     vendor: "",
@@ -194,6 +202,22 @@ export function AssetsPage({ setupData }) {
         }
       })
       .catch((err) => setError(err.message));
+  }
+
+  async function loadSetupData() {
+    try {
+      setSetupLoading(true);
+      const data = await getAssetsBootstrap();
+      setSetupData({
+        products: Array.isArray(data?.products) ? data.products : [],
+        locations: Array.isArray(data?.locations) ? data.locations : [],
+        users: Array.isArray(data?.users) ? data.users : [],
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSetupLoading(false);
+    }
   }
 
   async function loadQrPreview(assetId, setters) {
@@ -490,6 +514,7 @@ export function AssetsPage({ setupData }) {
   }
 
   useEffect(() => {
+    loadSetupData();
     loadAssets();
   }, []);
 
@@ -586,7 +611,7 @@ export function AssetsPage({ setupData }) {
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
       setMessage(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`);
-      setCreateForm((current) => ({ ...current, productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" }));
+      setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
       await loadAssets(search ? { search } : {});
       await handleSelectAsset(createdAsset._id);
     } catch (err) {
@@ -667,7 +692,6 @@ export function AssetsPage({ setupData }) {
   async function submitCsv(event) {
     event.preventDefault();
     const file = event.target.file.files?.[0];
-    const performedById = event.target.performedById.value;
 
     if (!file) {
       setError("Select a CSV file first.");
@@ -675,12 +699,16 @@ export function AssetsPage({ setupData }) {
     }
 
     try {
-      const result = await uploadAssetCsv({ file, performedById });
+      const result = await uploadAssetCsv({ file });
       setMessage(`CSV queued successfully. Job ID: ${result.jobId}`);
       event.target.reset();
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  if (setupLoading) {
+    return <div className="page-message">Loading assets workspace...</div>;
   }
 
   return (
@@ -776,10 +804,6 @@ export function AssetsPage({ setupData }) {
               </select>
               <select className="input" name="assignedToId" value={createForm.assignedToId} onChange={handleCreateChange}>
                 <option value="">Assigned To (optional)</option>
-                {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
-              </select>
-              <select className="input" name="performedById" value={createForm.performedById} onChange={handleCreateChange} required>
-                <option value="">Created By</option>
                 {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
               </select>
               <textarea className="input textarea" name="notes" placeholder="Creation notes" value={createForm.notes} onChange={handleCreateChange} />
@@ -933,10 +957,6 @@ export function AssetsPage({ setupData }) {
                 {selectedAsset?.status === ASSET_STATUSES.ASSIGNED && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ? (
                   <div className="action-hint">This device is assigned, so SEND_OUTSIDE will keep the current assignee as the outside holder.</div>
                 ) : null}
-                <select className="input" name="performedById" value={actionForm.performedById} onChange={handleActionChange} required>
-                  <option value="">Performed By</option>
-                  {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
-                </select>
                 {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="issue" placeholder="Issue (repair only)" value={actionForm.issue} onChange={handleActionChange} /> : null}
                 {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="vendor" placeholder="Vendor (repair only)" value={actionForm.vendor} onChange={handleActionChange} /> : null}
                 {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" type="number" name="cost" placeholder="Cost" value={actionForm.cost} onChange={handleActionChange} /> : null}
@@ -950,10 +970,6 @@ export function AssetsPage({ setupData }) {
 
       <form className="inline-form" onSubmit={submitCsv}>
         <input className="input" type="file" name="file" accept=".csv" />
-        <select className="input" name="performedById" defaultValue="" required>
-          <option value="">Performed By</option>
-          {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
-        </select>
         <button className="button" type="submit">Upload CSV</button>
       </form>
     </div>

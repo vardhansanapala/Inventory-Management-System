@@ -2,15 +2,43 @@ const { isValidObjectId, startSession } = require("mongoose");
 const { ACTION_REASONS } = require("../constants/asset.constants");
 const { Asset } = require("../models/Asset");
 const { AuditLog } = require("../models/AuditLog");
+const { Location } = require("../models/Location");
 const { Product } = require("../models/Product");
+const { User } = require("../models/User");
 const { buildAssetQrValue, generateQrPngBuffer, normalizeAssetId } = require("../services/qr.service");
 const { ApiError } = require("../utils/ApiError");
 const { createAssetWithQr, regenerateAssetQr } = require("../services/assetCreation.service");
 const { deleteObjectIfExists } = require("../services/s3.service");
 const { applyAssetAction } = require("../services/assetAction.service");
 
+async function getAssetBootstrap(req, res) {
+  const [products, locations, users] = await Promise.all([
+    Product.find({ isDeleted: false }).populate("category").sort({ sku: 1 }),
+    Location.find({ isDeleted: false }).sort({ name: 1 }),
+    User.find({
+      isDeleted: false,
+      isActive: true,
+      status: { $in: ["ACTIVE", null] },
+    }).sort({ firstName: 1, lastName: 1 }),
+  ]);
+
+  res.json({
+    products,
+    locations,
+    users: users.map((user) => ({
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      isActive: user.isActive,
+    })),
+  });
+}
+
 function resolveActorId(req) {
-  return req.user?._id || req.body.performedById;
+  return req.user?._id || null;
 }
 
 function serializeAsset(asset) {
@@ -260,6 +288,7 @@ async function performAssetAction(req, res) {
 }
 
 module.exports = {
+  getAssetBootstrap,
   listAssets,
   getAssetById,
   getDeviceByIdPublic,

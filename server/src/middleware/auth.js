@@ -1,5 +1,6 @@
 const { User } = require("../models/User");
 const { USER_STATUSES } = require("../constants/asset.constants");
+const { canAccessModule } = require("../constants/permissions");
 const { ApiError } = require("../utils/ApiError");
 const { verifyAuthToken } = require("../utils/jwt");
 
@@ -55,8 +56,23 @@ function requireRole(...allowedRoles) {
   };
 }
 
+function requireModuleAccess(moduleKey) {
+  return function moduleGuard(req, _res, next) {
+    if (!req.user) {
+      return next(new ApiError(401, "Authentication required"));
+    }
+
+    if (!canAccessModule(req.user.role, moduleKey)) {
+      return next(new ApiError(403, "You do not have access to this module"));
+    }
+
+    return next();
+  };
+}
+
 module.exports = {
   attachUserFromToken,
   requireAuth,
   requireRole,
+  requireModuleAccess,
 };

@@ -1,106 +1,123 @@
 import { useEffect, useMemo, useState } from "react";
-import { getDashboardSummary } from "../api/inventory";
+import { listLogs } from "../api/inventory";
 import { SectionCard } from "../components/SectionCard";
 
-const PAGE_SIZE = 10;
+const ALL_ACTIONS = "ALL_ACTIONS";
+const ALL_TYPES = "ALL_TYPES";
 
 export function LogsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const [actionType, setActionType] = useState(ALL_ACTIONS);
+  const [logType, setLogType] = useState(ALL_TYPES);
+
+  async function loadLogs() {
+    try {
+      setLoading(true);
+      setError("");
+      const data = await listLogs({
+        search,
+        actionType: actionType === ALL_ACTIONS ? "" : actionType,
+        logType: logType === ALL_TYPES ? "" : logType,
+      });
+      setLogs(Array.isArray(data?.logs) ? data.logs : []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    getDashboardSummary()
-      .then((data) => {
-        setLogs(Array.isArray(data?.recentLogs) ? data.recentLogs : []);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+    loadLogs();
+  }, [search, actionType, logType]);
 
-  const filteredLogs = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return logs;
+  const actionOptions = useMemo(() => {
+    const actionSet = new Set(logs.map((log) => log.actionType).filter(Boolean));
+    return [ALL_ACTIONS, ...Array.from(actionSet).sort()];
+  }, [logs]);
 
-    return logs.filter((log) => {
-      const byName = log.performedBy
-        ? `${log.performedBy.firstName || ""} ${log.performedBy.lastName || ""}`.toLowerCase()
-        : "";
-      const haystack = `${log.assetCode || ""} ${log.action || ""} ${byName}`.toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [logs, search]);
+  if (loading) {
+    return <div className="page-message">Loading logs...</div>;
+  }
 
-  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const paginatedLogs = filteredLogs.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search]);
-
-  if (loading) return <div className="page-message">Loading logs...</div>;
-  if (error) return <div className="page-message error">{error}</div>;
+  if (error) {
+    return <div className="page-message error">{error}</div>;
+  }
 
   return (
     <div className="page-stack">
       <SectionCard
         title="Logs"
-        subtitle="Search and review audit entries"
+        subtitle="Review asset activity and user-management audit events from one place."
         actions={
-          <input
-            className="input"
-            placeholder="Search by asset, action, or user"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
+          <div className="logs-toolbar">
+            <input
+              className="input"
+              placeholder="Search by action, asset, actor, or target user"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <select className="input" value={logType} onChange={(event) => setLogType(event.target.value)}>
+              <option value={ALL_TYPES}>All log types</option>
+              <option value="ASSET">Asset events</option>
+              <option value="USER">User events</option>
+            </select>
+            <select className="input" value={actionType} onChange={(event) => setActionType(event.target.value)}>
+              {actionOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option === ALL_ACTIONS ? "All actions" : option}
+                </option>
+              ))}
+            </select>
+          </div>
         }
       >
         <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
-                <th>Asset</th>
+                <th>Type</th>
                 <th>Action</th>
+                <th>Target</th>
                 <th>By</th>
                 <th>At</th>
               </tr>
             </thead>
             <tbody>
-              {paginatedLogs.length ? (
-                paginatedLogs.map((log) => (
+              {logs.length ? (
+                logs.map((log) => (
                   <tr key={log._id}>
-                    <td>{log.assetCode || "-"}</td>
-                    <td>{log.action || "-"}</td>
+                    <td>
+                      <span className={`log-type-badge ${log.logType === "USER" ? "is-user" : "is-asset"}`}>
+                        {log.logType}
+                      </span>
+                    </td>
+                    <td>{log.actionType || "-"}</td>
+                    <td>
+                      {log.logType === "USER"
+                        ? log.targetUser
+                          ? `${log.targetUser.firstName || ""} ${log.targetUser.lastName || ""}`.trim()
+                          : "Unknown user"
+                        : log.assetCode || "-"}
+                    </td>
                     <td>
                       {log.performedBy
                         ? `${log.performedBy.firstName || ""} ${log.performedBy.lastName || ""}`.trim()
                         : "Unknown"}
                     </td>
-                    <td>{log.timestamp || log.createdAt ? new Date(log.timestamp || log.createdAt).toLocaleString() : "-"}</td>
+                    <td>{log.timestamp ? new Date(log.timestamp).toLocaleString() : "-"}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4}>No logs found.</td>
+                  <td colSpan={5}>No logs found for the selected filters.</td>
                 </tr>
               )}
             </tbody>
           </table>
-        </div>
-
-        <div className="pager">
-          <button className="button dark" type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1}>
-            Previous
-          </button>
-          <span className="table-subtle">
-            Page {safePage} of {totalPages}
-          </span>
-          <button className="button dark" type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}>
-            Next
-          </button>
         </div>
       </SectionCard>
     </div>

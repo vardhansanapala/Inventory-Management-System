@@ -1,18 +1,11 @@
 import { NavLink } from "react-router-dom";
-
+import { getVisibleSidebarLinks } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
 
 export function AppShell({ children }) {
   const { user, logout } = useAuth();
-  const links = [
-    { to: "/", label: "Dashboard" },
-    { to: "/assets", label: "Assets" },
-    { to: "/logs", label: "Logs" },
-    { to: "/setup", label: "Setup" },
-  ];
-  if (user) {
-    links.push({ to: "/users", label: "Users" });
-  }
+  const links = getVisibleSidebarLinks(user);
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -20,7 +13,7 @@ export function AppShell({ children }) {
           <p className="eyebrow">Office Ops</p>
           <h1>Inventory Command Center</h1>
           <p className="sidebar-copy">
-            Track assets, audit every movement, and keep setup masters clean.
+            Track assets, audit every movement, and manage access with role-aware controls.
           </p>
         </div>
 
@@ -45,10 +38,14 @@ export function AppShell({ children }) {
               <span className="user-badge">
                 {user.firstName} {user.lastName} · {String(user.role || "").replaceAll("_", " ")}
               </span>
-              <button className="button" onClick={logout}>Logout</button>
+              <button className="button" onClick={logout}>
+                Logout
+              </button>
             </>
           ) : (
-            <NavLink to="/login" className="button">Login</NavLink>
+            <NavLink to="/login" className="button">
+              Login
+            </NavLink>
           )}
         </div>
       </header>
@@ -57,4 +54,3 @@ export function AppShell({ children }) {
     </div>
   );
 }
-

@@ -13,25 +13,16 @@ export function AuthProvider({ children }) {
     try {
       setError('');
       const token = getAuthToken();
-      // #region agent log
-      fetch("http://127.0.0.1:7299/ingest/afc6bc82-97a6-4cba-b47f-6786dfde5c37", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "37ac0c" }, body: JSON.stringify({ sessionId: "37ac0c", runId: "pre-fix", hypothesisId: "H2", location: "AuthContext.jsx:18", message: "fetchCurrentUser entry", data: { hasToken: Boolean(token) }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
       if (!token) {
         setUser(null);
         return;
       }
       const currentUser = await getCurrentUser();
       setUser(currentUser?.user || null);
-      // #region agent log
-      fetch("http://127.0.0.1:7299/ingest/afc6bc82-97a6-4cba-b47f-6786dfde5c37", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "37ac0c" }, body: JSON.stringify({ sessionId: "37ac0c", runId: "post-fix", hypothesisId: "H2", location: "AuthContext.jsx:27", message: "fetchCurrentUser success", data: { role: currentUser?.user?.role || null, payloadHasUserKey: Boolean(currentUser?.user) }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
     } catch (err) {
       clearAuthToken();
       setUser(null);
       setError(err.message);
-      // #region agent log
-      fetch("http://127.0.0.1:7299/ingest/afc6bc82-97a6-4cba-b47f-6786dfde5c37", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "37ac0c" }, body: JSON.stringify({ sessionId: "37ac0c", runId: "pre-fix", hypothesisId: "H2", location: "AuthContext.jsx:34", message: "fetchCurrentUser failed", data: { errorMessage: err.message }, timestamp: Date.now() }) }).catch(() => {});
-      // #endregion
     } finally {
       setLoading(false);
     }

@@ -15,8 +15,24 @@ export function getDashboardSummary() {
   return request("/dashboard/summary");
 }
 
+export function listLogs(params = {}) {
+  const query = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      query.set(key, value);
+    }
+  });
+
+  return request(`/logs${query.toString() ? `?${query.toString()}` : ""}`);
+}
+
 export function getSetupBootstrap() {
   return request("/setup/bootstrap");
+}
+
+export function getAssetsBootstrap() {
+  return request("/assets/bootstrap");
 }
 
 export function createCategory(payload) {
@@ -33,10 +49,49 @@ export function createLocation(payload) {
   });
 }
 
+export function updateCategory(categoryId, payload) {
+  return request(`/setup/categories/${encodeURIComponent(categoryId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCategory(categoryId) {
+  return request(`/setup/categories/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE",
+  });
+}
+
+export function updateLocation(locationId, payload) {
+  return request(`/setup/locations/${encodeURIComponent(locationId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteLocation(locationId) {
+  return request(`/setup/locations/${encodeURIComponent(locationId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function createProduct(payload) {
   return request("/setup/products", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateProduct(productId, payload) {
+  return request(`/setup/products/${encodeURIComponent(productId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteProduct(productId) {
+  return request(`/setup/products/${encodeURIComponent(productId)}`, {
+    method: "DELETE",
   });
 }
 
@@ -131,7 +186,9 @@ export function performAssetAction(assetId, payload) {
 export function uploadAssetCsv({ file, performedById }) {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("performedById", performedById);
+  if (performedById) {
+    formData.append("performedById", performedById);
+  }
 
   return request("/imports/assets", {
     method: "POST",

@@ -1,5 +1,7 @@
 const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 const { User } = require("../models/User");
+const { USER_AUDIT_ACTIONS } = require("../models/UserAuditLog");
+const { createUserAuditLog } = require("../services/userAudit.service");
 const { ApiError } = require("../utils/ApiError");
 const { hashPassword } = require("../utils/password");
 const { toPublicUser } = require("../utils/userSerializer");
@@ -10,6 +12,10 @@ function normalizeText(value) {
 
 function normalizeEmail(value) {
   return normalizeText(value).toLowerCase();
+}
+
+function normalizeStatus(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function requireValidPassword(password, fieldName = "Password") {
@@ -51,7 +57,9 @@ async function createUser(req, res) {
   const employeeCode = normalizeText(req.body.employeeCode) || undefined;
   const role = req.body.role;
   const password = String(req.body.password || "");
-  const isActive = req.body.isActive !== "false" && req.body.isActive !== false;
+  const requestedStatus = normalizeStatus(req.body.status);
+  const nextStatus =
+    requestedStatus === USER_STATUSES.PAUSED ? USER_STATUSES.PAUSED : USER_STATUSES.ACTIVE;
 
   if (!firstName || !lastName || !email) {
     throw new ApiError(400, "First name, last name and email are required");
@@ -74,9 +82,20 @@ async function createUser(req, res) {
     email,
     employeeCode,
     role,
-    isActive,
-    status: isActive ? USER_STATUSES.ACTIVE : USER_STATUSES.PAUSED,
+    isActive: nextStatus === USER_STATUSES.ACTIVE,
+    status: nextStatus,
     passwordHash: await hashPassword(password),
+  });
+
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.USER_CREATED,
+    performedBy: actor._id,
+    targetUserId: user._id,
+    metadata: {
+      email: user.email,
+      role: user.role,
+      status: user.status,
+    },
   });
 
   res.status(201).json(toPublicUser(user));
@@ -130,13 +149,31 @@ async function updateUser(req, res) {
     user.role = req.body.role;
   }
 
-  if (req.body.isActive !== undefined) {
-    const isActive = req.body.isActive === true || req.body.isActive === "true";
-    user.isActive = isActive;
-    user.status = isActive ? USER_STATUSES.ACTIVE : USER_STATUSES.PAUSED;
+  if (req.body.status !== undefined) {
+    const nextStatus = normalizeStatus(req.body.status);
+    if (![USER_STATUSES.ACTIVE, USER_STATUSES.PAUSED].includes(nextStatus)) {
+      throw new ApiError(400, "Invalid status selected");
+    }
+    if (String(actor._id) === String(user._id) && nextStatus === USER_STATUSES.PAUSED) {
+      throw new ApiError(400, "You cannot pause your own account");
+    }
+    user.status = nextStatus;
+    user.isActive = nextStatus === USER_STATUSES.ACTIVE;
   }
 
   await user.save();
+
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.USER_UPDATED,
+    performedBy: actor._id,
+    targetUserId: user._id,
+    metadata: {
+      role: user.role,
+      status: user.status,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    },
+  });
 
   res.json(toPublicUser(user));
 }
@@ -151,15 +188,20 @@ async function resetUserPassword(req, res) {
     throw new ApiError(404, "User not found");
   }
 
-  if (user.role === USER_ROLES.SUPER_ADMIN) {
-    throw new ApiError(403, "Super admin passwords cannot be changed from this screen");
-  }
-
   const newPassword = String(req.body.password || req.body.newPassword || "");
   requireValidPassword(newPassword, "New password");
 
   user.passwordHash = await hashPassword(newPassword);
   await user.save();
+
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.PASSWORD_RESET,
+    performedBy: req.user._id,
+    targetUserId: user._id,
+    metadata: {
+      email: user.email,
+    },
+  });
 
   res.json({
     message: "Password updated successfully",
@@ -184,6 +226,15 @@ async function pauseUser(req, res) {
   user.isActive = false;
   await user.save();
 
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.ACCOUNT_PAUSED,
+    performedBy: req.user._id,
+    targetUserId: user._id,
+    metadata: {
+      email: user.email,
+    },
+  });
+
   res.json({
     message: "User account paused",
   });
@@ -202,6 +253,15 @@ async function resumeUser(req, res) {
   user.status = USER_STATUSES.ACTIVE;
   user.isActive = true;
   await user.save();
+
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.ACCOUNT_RESUMED,
+    performedBy: req.user._id,
+    targetUserId: user._id,
+    metadata: {
+      email: user.email,
+    },
+  });
 
   res.json({
     message: "User account resumed",
@@ -227,6 +287,16 @@ async function deleteUser(req, res) {
   user.isActive = false;
   await user.save();
 
+  await createUserAuditLog({
+    actionType: USER_AUDIT_ACTIONS.USER_DELETED,
+    performedBy: req.user._id,
+    targetUserId: user._id,
+    metadata: {
+      email: user.email,
+      role: user.role,
+    },
+  });
+
   res.json({
     message: "User deleted successfully",
   });
@@ -241,4 +311,3 @@ module.exports = {
   resumeUser,
   deleteUser,
 };
-

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   createUser,
   deleteUser,
@@ -9,16 +8,21 @@ import {
   resumeUser,
   updateUser,
 } from "../api/inventory";
-import { ROLES } from "../constants/roles.js";
-import { useAuth } from "../context/AuthContext";
 import { SectionCard } from "../components/SectionCard";
+import { ROLES } from "../constants/roles";
+import { useAuth } from "../context/AuthContext";
+
+const USER_STATUSES = {
+  ACTIVE: "ACTIVE",
+  PAUSED: "PAUSED",
+};
 
 const emptyCreateForm = {
   firstName: "",
   lastName: "",
   email: "",
   role: ROLES.ADMIN,
-  isActive: true,
+  status: USER_STATUSES.ACTIVE,
   password: "",
   confirmPassword: "",
 };
@@ -28,42 +32,95 @@ const emptyPasswordForm = {
   confirmPassword: "",
 };
 
+const emptyEditForm = {
+  firstName: "",
+  lastName: "",
+  role: ROLES.EMPLOYEE,
+  status: USER_STATUSES.ACTIVE,
+};
+
 function getPasswordErrors(password, confirmPassword) {
   const errors = {};
+
   if (password.length < 6) {
     errors.password = "Password must be at least 6 characters.";
   }
+
   if (confirmPassword && password !== confirmPassword) {
     errors.confirmPassword = "Passwords must match.";
   }
+
   return errors;
 }
 
-export function UsersPage({ refreshSetupData }) {
-  const navigate = useNavigate();
-  const { user: currentUser } = useAuth();
-  const isSuperAdmin = currentUser?.role === ROLES.SUPER_ADMIN;
-  const canViewUsers = Boolean(currentUser);
+function generateStrongPassword() {
+  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*";
+  const length = 12;
+  return Array.from({ length }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
+}
 
+function UserModal({ title, subtitle, children, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal users-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2>{title}</h2>
+            {subtitle ? <p className="table-subtle">{subtitle}</p> : null}
+          </div>
+          <button className="icon-action-button" type="button" onClick={onClose} aria-label="Close modal">
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, visible, onToggle, error, autoComplete = "new-password" }) {
+  return (
+    <label className="field-stack">
+      <span>{label}</span>
+      <div className="password-field">
+        <input
+          className="input"
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+        />
+        <button className="button ghost password-toggle" type="button" onClick={onToggle} title={visible ? "Hide password" : "Show password"}>
+          {visible ? "Hide" : "Show"}
+        </button>
+      </div>
+      {error ? <p className="field-error">{error}</p> : null}
+    </label>
+  );
+}
+
+export function UsersPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [openActionsFor, setOpenActionsFor] = useState(null);
 
   const [createForm, setCreateForm] = useState(emptyCreateForm);
-  const [openActionsFor, setOpenActionsFor] = useState(null);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showCreateConfirm, setShowCreateConfirm] = useState(false);
+
   const [editingUser, setEditingUser] = useState(null);
+  const [editForm, setEditForm] = useState(emptyEditForm);
+
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [passwordForm, setPasswordForm] = useState(emptyPasswordForm);
-  const [deleteUserTarget, setDeleteUserTarget] = useState(null);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  const [editForm, setEditForm] = useState({
-    firstName: "",
-    lastName: "",
-    role: ROLES.EMPLOYEE,
-    isActive: true,
-  });
+  const [deleteUserTarget, setDeleteUserTarget] = useState(null);
 
   const createPasswordErrors = getPasswordErrors(createForm.password, createForm.confirmPassword);
   const resetPasswordErrors = getPasswordErrors(passwordForm.password, passwordForm.confirmPassword);
@@ -82,40 +139,29 @@ export function UsersPage({ refreshSetupData }) {
     return passwordForm.password.length >= 6 && passwordForm.password === passwordForm.confirmPassword;
   }, [passwordForm]);
 
-  useEffect(() => {
-    if (!canViewUsers) {
-      navigate("/");
-    }
-  }, [canViewUsers, navigate]);
-
-  const fetchUsers = async () => {
+  async function fetchUsers() {
     try {
       setError("");
       const data = await listUsers();
-      setUsers(data);
+      setUsers(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    if (canViewUsers) {
-      fetchUsers();
-    }
-  }, [canViewUsers]);
+    fetchUsers();
+  }, []);
 
-  const withUserRefresh = async (run, successMessage) => {
+  async function withRefresh(run, successMessage) {
     try {
-      setError("");
-      setMessage("");
       setSubmitting(true);
+      setMessage("");
+      setError("");
       await run();
       await fetchUsers();
-      if (refreshSetupData) {
-        await refreshSetupData();
-      }
       setMessage(successMessage);
     } catch (err) {
       setError(err.message);
@@ -123,211 +169,205 @@ export function UsersPage({ refreshSetupData }) {
       setSubmitting(false);
       setOpenActionsFor(null);
     }
-  };
+  }
 
-  const handleCreate = async (event) => {
+  async function handleCreate(event) {
     event.preventDefault();
     if (!createFormValid) {
       return;
     }
 
-    await withUserRefresh(async () => {
+    await withRefresh(async () => {
       await createUser({
         firstName: createForm.firstName.trim(),
         lastName: createForm.lastName.trim(),
         email: createForm.email.trim(),
         role: createForm.role,
-        isActive: createForm.isActive,
+        status: createForm.status,
         password: createForm.password,
       });
       setCreateForm(emptyCreateForm);
+      setShowCreatePassword(false);
+      setShowCreateConfirm(false);
     }, "User created successfully.");
-  };
+  }
 
-  const openEditModal = (user) => {
-    setEditForm({
-      firstName: user.firstName || "",
-      lastName: user.lastName || "",
-      role: user.role || ROLES.EMPLOYEE,
-      isActive: user.status !== "PAUSED" && Boolean(user.isActive),
-    });
-    setEditingUser(user);
-  };
-
-  const handleEdit = async () => {
+  async function handleEdit() {
     if (!editingUser) {
       return;
     }
 
-    await withUserRefresh(async () => {
+    await withRefresh(async () => {
       await updateUser(editingUser._id, {
         firstName: editForm.firstName.trim(),
         lastName: editForm.lastName.trim(),
         role: editForm.role,
-        isActive: editForm.isActive,
+        status: editForm.status,
       });
       setEditingUser(null);
     }, "User updated successfully.");
-  };
+  }
 
-  const handlePasswordReset = async () => {
+  async function handlePasswordReset() {
     if (!resetPasswordUser || !resetFormValid) {
       return;
     }
 
-    await withUserRefresh(async () => {
+    await withRefresh(async () => {
       await resetUserPassword(resetPasswordUser._id, {
         password: passwordForm.password,
       });
       setResetPasswordUser(null);
       setPasswordForm(emptyPasswordForm);
-    }, "Password updated successfully.");
-  };
+      setShowResetPassword(false);
+      setShowResetConfirm(false);
+    }, "Password reset successfully.");
+  }
 
-  const handlePauseResume = async (user) => {
-    await withUserRefresh(async () => {
-      if (user.status === "PAUSED") {
-        await resumeUser(user._id);
+  async function handlePauseResume(targetUser) {
+    await withRefresh(async () => {
+      if (targetUser.status === USER_STATUSES.PAUSED) {
+        await resumeUser(targetUser._id);
       } else {
-        await pauseUser(user._id);
+        await pauseUser(targetUser._id);
       }
-    }, user.status === "PAUSED" ? "User resumed successfully." : "User paused successfully.");
-  };
+    }, targetUser.status === USER_STATUSES.PAUSED ? "Account resumed successfully." : "Account paused successfully.");
+  }
 
-  const handleDelete = async () => {
+  async function handleDelete() {
     if (!deleteUserTarget) {
       return;
     }
 
-    await withUserRefresh(async () => {
+    await withRefresh(async () => {
       await deleteUser(deleteUserTarget._id);
       setDeleteUserTarget(null);
     }, "User deleted successfully.");
-  };
+  }
 
-  const getActions = (targetUser) => {
-    const canEdit = isSuperAdmin;
-    const canReset = isSuperAdmin;
-    const canPauseResume = isSuperAdmin && targetUser._id !== currentUser?._id;
-    const canDelete = isSuperAdmin && targetUser._id !== currentUser?._id;
+  function openEditModal(targetUser) {
+    setEditingUser(targetUser);
+    setEditForm({
+      firstName: targetUser.firstName || "",
+      lastName: targetUser.lastName || "",
+      role: targetUser.role || ROLES.EMPLOYEE,
+      status: targetUser.status || USER_STATUSES.ACTIVE,
+    });
+    setOpenActionsFor(null);
+  }
 
-    return [
-      {
-        id: "edit",
-        label: "Edit User",
-        icon: "✏",
-        hidden: !canEdit,
-        onClick: () => openEditModal(targetUser),
-      },
-      {
-        id: "reset",
-        label: "Reset Password",
-        icon: "🔐",
-        hidden: !canReset,
-        onClick: () => setResetPasswordUser(targetUser),
-      },
-      {
-        id: "pauseResume",
-        label: targetUser.status === "PAUSED" ? "Resume Account" : "Pause Account",
-        icon: targetUser.status === "PAUSED" ? "▶" : "⏸",
-        hidden: !canPauseResume,
-        onClick: () => handlePauseResume(targetUser),
-      },
-      {
-        id: "delete",
-        label: "Delete User",
-        icon: "🗑",
-        hidden: !canDelete,
-        danger: true,
-        onClick: () => setDeleteUserTarget(targetUser),
-      },
-    ].filter((action) => !action.hidden);
-  };
+  function openResetModal(targetUser) {
+    setResetPasswordUser(targetUser);
+    setPasswordForm(emptyPasswordForm);
+    setShowResetPassword(false);
+    setShowResetConfirm(false);
+    setOpenActionsFor(null);
+  }
 
-  if (!canViewUsers) {
-    return null;
+  function applyGeneratedPassword() {
+    const generated = generateStrongPassword();
+    setCreateForm((current) => ({
+      ...current,
+      password: generated,
+      confirmPassword: generated,
+    }));
+    setShowCreatePassword(true);
+    setShowCreateConfirm(true);
+  }
+
+  const roleOptions = [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.EMPLOYEE];
+
+  if (loading) {
+    return <div className="page-message">Loading users...</div>;
   }
 
   return (
     <div className="page-stack users-page">
-      {message && <div className="page-message success">{message}</div>}
-      {error && <div className="page-message error">{error}</div>}
+      {message ? <div className="page-message success">{message}</div> : null}
+      {error ? <div className="page-message error">{error}</div> : null}
 
-      {isSuperAdmin ? (
-      <SectionCard title="Create User" subtitle="Add new team members with secure password setup.">
+      <SectionCard
+        title="User Management"
+        subtitle="Create accounts, manage roles, and control account status with super-admin-only actions."
+        actions={<span className="role-chip">Super admin only</span>}
+      >
         <form className="form-grid users-form-grid" onSubmit={handleCreate}>
-          <input
-            className="input"
-            name="firstName"
-            placeholder="First Name"
-            value={createForm.firstName}
-            onChange={(event) => setCreateForm({ ...createForm, firstName: event.target.value })}
-          />
-          <input
-            className="input"
-            name="lastName"
-            placeholder="Last Name"
-            value={createForm.lastName}
-            onChange={(event) => setCreateForm({ ...createForm, lastName: event.target.value })}
-          />
-          <input
-            className="input"
-            type="email"
-            name="email"
-            placeholder="Email"
-            value={createForm.email}
-            onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })}
-          />
-          <select
-            className="input"
-            name="role"
-            value={createForm.role}
-            onChange={(event) => setCreateForm({ ...createForm, role: event.target.value })}
-          >
-            {isSuperAdmin ? <option value={ROLES.SUPER_ADMIN}>{ROLES.SUPER_ADMIN}</option> : null}
-            <option value={ROLES.ADMIN}>{ROLES.ADMIN}</option>
-            <option value={ROLES.EMPLOYEE}>{ROLES.EMPLOYEE}</option>
-          </select>
-          <div>
+          <label className="field-stack">
+            <span>First Name</span>
             <input
               className="input"
-              type="password"
-              name="password"
-              placeholder="Password"
-              value={createForm.password}
-              onChange={(event) => setCreateForm({ ...createForm, password: event.target.value })}
+              value={createForm.firstName}
+              onChange={(event) => setCreateForm({ ...createForm, firstName: event.target.value })}
+              required
             />
-            {createPasswordErrors.password ? <p className="field-error">{createPasswordErrors.password}</p> : null}
-          </div>
-          <div>
-            <input
-              className="input"
-              type="password"
-              name="confirmPassword"
-              placeholder="Confirm Password"
-              value={createForm.confirmPassword}
-              onChange={(event) => setCreateForm({ ...createForm, confirmPassword: event.target.value })}
-            />
-            {createPasswordErrors.confirmPassword ? (
-              <p className="field-error">{createPasswordErrors.confirmPassword}</p>
-            ) : null}
-          </div>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={createForm.isActive}
-              onChange={(event) => setCreateForm({ ...createForm, isActive: event.target.checked })}
-            />
-            Active account
           </label>
+          <label className="field-stack">
+            <span>Last Name</span>
+            <input
+              className="input"
+              value={createForm.lastName}
+              onChange={(event) => setCreateForm({ ...createForm, lastName: event.target.value })}
+              required
+            />
+          </label>
+          <label className="field-stack">
+            <span>Email</span>
+            <input
+              className="input"
+              type="email"
+              value={createForm.email}
+              onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })}
+              required
+            />
+          </label>
+          <label className="field-stack">
+            <span>Role</span>
+            <select className="input" value={createForm.role} onChange={(event) => setCreateForm({ ...createForm, role: event.target.value })}>
+              {roleOptions.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-stack">
+            <span>Status</span>
+            <select className="input" value={createForm.status} onChange={(event) => setCreateForm({ ...createForm, status: event.target.value })}>
+              <option value={USER_STATUSES.ACTIVE}>ACTIVE</option>
+              <option value={USER_STATUSES.PAUSED}>PAUSED</option>
+            </select>
+          </label>
+          <div className="field-stack">
+            <span>Password</span>
+            <div className="inline-form">
+              <button className="button ghost" type="button" onClick={applyGeneratedPassword}>
+                Generate Password
+              </button>
+            </div>
+            <PasswordField
+              label=""
+              value={createForm.password}
+              onChange={(value) => setCreateForm({ ...createForm, password: value })}
+              visible={showCreatePassword}
+              onToggle={() => setShowCreatePassword((current) => !current)}
+              error={createPasswordErrors.password}
+            />
+          </div>
+          <PasswordField
+            label="Confirm Password"
+            value={createForm.confirmPassword}
+            onChange={(value) => setCreateForm({ ...createForm, confirmPassword: value })}
+            visible={showCreateConfirm}
+            onToggle={() => setShowCreateConfirm((current) => !current)}
+            error={createPasswordErrors.confirmPassword}
+          />
           <button className="button" type="submit" disabled={!createFormValid || submitting}>
-            {submitting ? "Adding..." : "Add User"}
+            {submitting ? "Creating..." : "Create User"}
           </button>
         </form>
       </SectionCard>
-      ) : null}
 
-      <SectionCard title="Users List" subtitle="Manage access, status, and account lifecycle.">
+      <SectionCard title="Users" subtitle="Only active and paused accounts are shown here. Deleted users are soft removed.">
         <div className="table-wrap">
           <table className="table">
             <thead>
@@ -336,183 +376,188 @@ export function UsersPage({ refreshSetupData }) {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                {isSuperAdmin ? <th>Actions</th> : null}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {!loading && users.length === 0 ? (
-                <tr>
-                  <td colSpan={isSuperAdmin ? 5 : 4} className="table-subtle">
-                    No users found.
-                  </td>
-                </tr>
-              ) : (
-                users.map((user) => (
-                  <tr key={user._id}>
-                    <td>
-                      <strong>
-                        {user.firstName} {user.lastName}
-                      </strong>
-                    </td>
-                    <td>{user.email}</td>
-                    <td>{user.role}</td>
-                    <td>
-                      <span className={`user-status-badge ${user.status === "PAUSED" ? "is-paused" : "is-active"}`}>
-                        {user.status || (user.isActive ? "ACTIVE" : "PAUSED")}
-                      </span>
-                    </td>
-                    {isSuperAdmin ? (
+              {users.length ? (
+                users.map((targetUser) => {
+                  const isSelf = String(targetUser._id) === String(currentUser?._id);
+                  const canPauseResume = !isSelf;
+                  const canDelete = !isSelf;
+
+                  return (
+                    <tr key={targetUser._id}>
+                      <td>
+                        <strong>
+                          {targetUser.firstName} {targetUser.lastName}
+                        </strong>
+                      </td>
+                      <td>{targetUser.email}</td>
+                      <td>{targetUser.role}</td>
+                      <td>
+                        <span className={`user-status-badge ${targetUser.status === USER_STATUSES.PAUSED ? "is-paused" : "is-active"}`}>
+                          {targetUser.status || USER_STATUSES.ACTIVE}
+                        </span>
+                      </td>
                       <td>
                         <div className="actions-dropdown">
                           <button
                             className="icon-action-button"
                             type="button"
                             title="User actions"
-                            aria-label={`Open actions for ${user.firstName} ${user.lastName}`}
-                            onClick={() => setOpenActionsFor(openActionsFor === user._id ? null : user._id)}
+                            aria-label={`Open actions for ${targetUser.firstName} ${targetUser.lastName}`}
+                            onClick={() => setOpenActionsFor(openActionsFor === targetUser._id ? null : targetUser._id)}
                           >
                             ⋮
                           </button>
-                          {openActionsFor === user._id ? (
+                          {openActionsFor === targetUser._id ? (
                             <div className="actions-menu" role="menu">
-                              {getActions(user).map((action) => (
-                                <button
-                                  key={action.id}
-                                  type="button"
-                                  className={`actions-menu-item ${action.danger ? "danger" : ""}`}
-                                  title={action.label}
-                                  onClick={action.onClick}
-                                >
-                                  <span aria-hidden>{action.icon}</span>
-                                  <span>{action.label}</span>
+                              <button type="button" className="actions-menu-item" title="Edit user" onClick={() => openEditModal(targetUser)}>
+                                <span aria-hidden>✎</span>
+                                <span>Edit User</span>
+                              </button>
+                              <button type="button" className="actions-menu-item" title="Reset password" onClick={() => openResetModal(targetUser)}>
+                                <span aria-hidden>⌁</span>
+                                <span>Reset Password</span>
+                              </button>
+                              {canPauseResume ? (
+                                <button type="button" className="actions-menu-item" title="Pause or resume user" onClick={() => handlePauseResume(targetUser)}>
+                                  <span aria-hidden>{targetUser.status === USER_STATUSES.PAUSED ? "▶" : "⏸"}</span>
+                                  <span>{targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account"}</span>
                                 </button>
-                              ))}
+                              ) : null}
+                              {canDelete ? (
+                                <button
+                                  type="button"
+                                  className="actions-menu-item danger"
+                                  title="Delete user"
+                                  onClick={() => {
+                                    setDeleteUserTarget(targetUser);
+                                    setOpenActionsFor(null);
+                                  }}
+                                >
+                                  <span aria-hidden>⌦</span>
+                                  <span>Delete User</span>
+                                </button>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>
                       </td>
-                    ) : null}
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={5}>No users found.</td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
       </SectionCard>
 
-      {isSuperAdmin && editingUser ? (
-        <div className="modal-overlay">
-          <div className="modal users-modal">
-            <h2>Edit User</h2>
-            <p className="table-subtle">Email cannot be updated: {editingUser.email}</p>
-            <div className="form-grid">
+      {editingUser ? (
+        <UserModal title="Edit User" subtitle={`Email is fixed for ${editingUser.email}`} onClose={() => setEditingUser(null)}>
+          <div className="form-grid">
+            <label className="field-stack">
+              <span>First Name</span>
               <input
                 className="input"
-                placeholder="First Name"
                 value={editForm.firstName}
                 onChange={(event) => setEditForm({ ...editForm, firstName: event.target.value })}
               />
+            </label>
+            <label className="field-stack">
+              <span>Last Name</span>
               <input
                 className="input"
-                placeholder="Last Name"
                 value={editForm.lastName}
                 onChange={(event) => setEditForm({ ...editForm, lastName: event.target.value })}
               />
-              <select
-                className="input"
-                value={editForm.role}
-                onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}
-              >
-                {isSuperAdmin ? <option value={ROLES.SUPER_ADMIN}>{ROLES.SUPER_ADMIN}</option> : null}
-                <option value={ROLES.ADMIN}>{ROLES.ADMIN}</option>
-                <option value={ROLES.EMPLOYEE}>{ROLES.EMPLOYEE}</option>
+            </label>
+            <label className="field-stack">
+              <span>Role</span>
+              <select className="input" value={editForm.role} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
+                {roleOptions.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
               </select>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={editForm.isActive}
-                  onChange={(event) => setEditForm({ ...editForm, isActive: event.target.checked })}
-                />
-                Active
-              </label>
-            </div>
-            <div className="modal-actions">
-              <button className="button ghost" type="button" onClick={() => setEditingUser(null)} disabled={submitting}>
-                Cancel
-              </button>
-              <button className="button" type="button" onClick={handleEdit} disabled={submitting}>
-                {submitting ? "Saving..." : "Save"}
-              </button>
-            </div>
+            </label>
+            <label className="field-stack">
+              <span>Status</span>
+              <select className="input" value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>
+                <option value={USER_STATUSES.ACTIVE}>ACTIVE</option>
+                <option value={USER_STATUSES.PAUSED}>PAUSED</option>
+              </select>
+            </label>
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="button ghost" type="button" onClick={() => setEditingUser(null)} disabled={submitting}>
+              Cancel
+            </button>
+            <button className="button" type="button" onClick={handleEdit} disabled={submitting}>
+              {submitting ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
+        </UserModal>
       ) : null}
 
-      {isSuperAdmin && resetPasswordUser ? (
-        <div className="modal-overlay">
-          <div className="modal users-modal">
-            <h2>Reset Password</h2>
-            <div className="form-grid">
-              <div>
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="New Password"
-                  value={passwordForm.password}
-                  onChange={(event) => setPasswordForm({ ...passwordForm, password: event.target.value })}
-                />
-                {resetPasswordErrors.password ? <p className="field-error">{resetPasswordErrors.password}</p> : null}
-              </div>
-              <div>
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="Confirm Password"
-                  value={passwordForm.confirmPassword}
-                  onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })}
-                />
-                {resetPasswordErrors.confirmPassword ? (
-                  <p className="field-error">{resetPasswordErrors.confirmPassword}</p>
-                ) : null}
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button
-                className="button ghost"
-                type="button"
-                onClick={() => {
-                  setResetPasswordUser(null);
-                  setPasswordForm(emptyPasswordForm);
-                }}
-                disabled={submitting}
-              >
-                Cancel
-              </button>
-              <button className="button" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || submitting}>
-                {submitting ? "Updating..." : "Update Password"}
-              </button>
-            </div>
+      {resetPasswordUser ? (
+        <UserModal
+          title="Reset Password"
+          subtitle={`Set a new password for ${resetPasswordUser.firstName} ${resetPasswordUser.lastName}`}
+          onClose={() => setResetPasswordUser(null)}
+        >
+          <div className="form-grid">
+            <PasswordField
+              label="New Password"
+              value={passwordForm.password}
+              onChange={(value) => setPasswordForm({ ...passwordForm, password: value })}
+              visible={showResetPassword}
+              onToggle={() => setShowResetPassword((current) => !current)}
+              error={resetPasswordErrors.password}
+            />
+            <PasswordField
+              label="Confirm Password"
+              value={passwordForm.confirmPassword}
+              onChange={(value) => setPasswordForm({ ...passwordForm, confirmPassword: value })}
+              visible={showResetConfirm}
+              onToggle={() => setShowResetConfirm((current) => !current)}
+              error={resetPasswordErrors.confirmPassword}
+            />
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="button ghost" type="button" onClick={() => setResetPasswordUser(null)} disabled={submitting}>
+              Cancel
+            </button>
+            <button className="button" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || submitting}>
+              {submitting ? "Updating..." : "Update Password"}
+            </button>
+          </div>
+        </UserModal>
       ) : null}
 
-      {isSuperAdmin && deleteUserTarget ? (
-        <div className="modal-overlay">
-          <div className="modal users-modal">
-            <h2>Delete User?</h2>
-            <p>This action cannot be undone.</p>
-            <div className="modal-actions">
-              <button className="button ghost" type="button" onClick={() => setDeleteUserTarget(null)} disabled={submitting}>
-                Cancel
-              </button>
-              <button className="button danger" type="button" onClick={handleDelete} disabled={submitting}>
-                {submitting ? "Deleting..." : "Delete"}
-              </button>
-            </div>
+      {deleteUserTarget ? (
+        <UserModal
+          title="Delete User"
+          subtitle={`This will soft-delete ${deleteUserTarget.firstName} ${deleteUserTarget.lastName}.`}
+          onClose={() => setDeleteUserTarget(null)}
+        >
+          <p>This action cannot be undone.</p>
+          <div className="modal-actions">
+            <button className="button ghost" type="button" onClick={() => setDeleteUserTarget(null)} disabled={submitting}>
+              Cancel
+            </button>
+            <button className="button danger" type="button" onClick={handleDelete} disabled={submitting}>
+              {submitting ? "Deleting..." : "Delete User"}
+            </button>
           </div>
-        </div>
+        </UserModal>
       ) : null}
     </div>
   );
 }
-

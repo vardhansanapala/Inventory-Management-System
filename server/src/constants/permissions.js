@@ -1,0 +1,27 @@
+const { USER_ROLES } = require("./asset.constants");
+
+const MODULE_KEYS = {
+  DASHBOARD: "DASHBOARD",
+  ASSETS: "ASSETS",
+  LOGS: "LOGS",
+  SETUP: "SETUP",
+  USERS: "USERS",
+};
+
+const MODULE_ACCESS = {
+  [MODULE_KEYS.DASHBOARD]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE],
+  [MODULE_KEYS.ASSETS]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN],
+  [MODULE_KEYS.LOGS]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE],
+  [MODULE_KEYS.SETUP]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN],
+  [MODULE_KEYS.USERS]: [USER_ROLES.SUPER_ADMIN],
+};
+
+function canAccessModule(role, moduleKey) {
+  return Boolean(role && MODULE_ACCESS[moduleKey]?.includes(role));
+}
+
+module.exports = {
+  MODULE_KEYS,
+  MODULE_ACCESS,
+  canAccessModule,
+};

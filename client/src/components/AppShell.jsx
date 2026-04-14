@@ -10,7 +10,7 @@ export function AppShell({ children }) {
     { to: "/logs", label: "Logs" },
     { to: "/setup", label: "Setup" },
   ];
-  if (user?.role === 'SUPER_ADMIN') {
+  if (user) {
     links.push({ to: "/users", label: "Users" });
   }
   return (

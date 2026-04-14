@@ -1,15 +1,25 @@
 const express = require("express");
-const { createUser, listUsers, resetUserPassword, updateUser } = require("../controllers/user.controller");
-const { requireRole } = require("../middleware/auth");
+const {
+  createUser,
+  listUsers,
+  resetUserPassword,
+  updateUser,
+  pauseUser,
+  resumeUser,
+  deleteUser,
+} = require("../controllers/user.controller");
+const { requireAuth, requireRole } = require("../middleware/auth");
 const { USER_ROLES } = require("../constants/asset.constants");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
-router.use(requireRole(USER_ROLES.SUPER_ADMIN));
-router.get("/", asyncHandler(listUsers));
-router.post("/", asyncHandler(createUser));
-router.patch("/:id", asyncHandler(updateUser));
-router.post("/:id/reset-password", asyncHandler(resetUserPassword));
+router.get("/", requireAuth, asyncHandler(listUsers));
+router.post("/", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(createUser));
+router.patch("/:id", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(updateUser));
+router.patch("/:id/reset-password", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(resetUserPassword));
+router.patch("/:id/pause", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(pauseUser));
+router.patch("/:id/resume", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(resumeUser));
+router.delete("/:id", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(deleteUser));
 
 module.exports = router;

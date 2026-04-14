@@ -1,4 +1,5 @@
 const { User } = require("../models/User");
+const { USER_STATUSES } = require("../constants/asset.constants");
 const { ApiError } = require("../utils/ApiError");
 const { comparePassword } = require("../utils/password");
 const { signAuthToken } = require("../utils/jwt");
@@ -16,6 +17,7 @@ async function login(req, res) {
     email,
     isDeleted: false,
     isActive: true,
+    status: { $in: [USER_STATUSES.ACTIVE, null] },
   }).select("+passwordHash");
 
   if (!user) {

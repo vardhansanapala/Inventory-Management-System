@@ -60,8 +60,26 @@ export function updateUser(userId, payload) {
 
 export function resetUserPassword(userId, payload) {
   return request(`/users/${userId}/reset-password`, {
-    method: "POST",
+    method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export function pauseUser(userId) {
+  return request(`/users/${userId}/pause`, {
+    method: "PATCH",
+  });
+}
+
+export function resumeUser(userId) {
+  return request(`/users/${userId}/resume`, {
+    method: "PATCH",
+  });
+}
+
+export function deleteUser(userId) {
+  return request(`/users/${userId}`, {
+    method: "DELETE",
   });
 }
 

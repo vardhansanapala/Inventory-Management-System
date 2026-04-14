@@ -103,7 +103,7 @@ export default function App() {
         <Route
           path="/users"
           element={
-            isAuthenticated && user?.role === 'SUPER_ADMIN' ? (
+            isAuthenticated ? (
               <UsersPage setupData={setupData} refreshSetupData={refreshSetupData} />
             ) : (
               <Navigate to={isAuthenticated ? "/" : "/login"} replace />

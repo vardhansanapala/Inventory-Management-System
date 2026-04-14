@@ -1,5 +1,5 @@
 const env = require("../config/env");
-const { USER_ROLES } = require("../constants/asset.constants");
+const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 const { User } = require("../models/User");
 const { comparePassword, hashPassword } = require("../utils/password");
 
@@ -18,6 +18,7 @@ async function ensureDefaultSuperAdmin() {
       role: USER_ROLES.SUPER_ADMIN,
       passwordHash,
       isActive: true,
+      status: USER_STATUSES.ACTIVE,
     });
 
     console.log(`Default super admin created for ${email}`);
@@ -49,6 +50,12 @@ async function ensureDefaultSuperAdmin() {
 
   if (!user.isActive) {
     user.isActive = true;
+    requiresSave = true;
+  }
+
+  if (user.status !== USER_STATUSES.ACTIVE) {
+    user.status = USER_STATUSES.ACTIVE;
+    user.isDeleted = false;
     requiresSave = true;
   }
 

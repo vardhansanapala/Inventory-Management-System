@@ -2,6 +2,7 @@ const { Category } = require("../models/Category");
 const { Location } = require("../models/Location");
 const { Product } = require("../models/Product");
 const { User } = require("../models/User");
+const { USER_STATUSES } = require("../constants/asset.constants");
 const { ApiError } = require("../utils/ApiError");
 const { toPublicUser } = require("../utils/userSerializer");
 
@@ -10,7 +11,11 @@ async function getSetupBootstrap(_req, res) {
     Category.find({ isDeleted: false }).sort({ name: 1 }),
     Product.find({ isDeleted: false }).populate("category").sort({ sku: 1 }),
     Location.find({ isDeleted: false }).sort({ name: 1 }),
-    User.find({ isDeleted: false, isActive: true }).sort({ firstName: 1, lastName: 1 }),
+    User.find({
+      isDeleted: false,
+      isActive: true,
+      status: { $in: [USER_STATUSES.ACTIVE, null] },
+    }).sort({ firstName: 1, lastName: 1 }),
   ]);
 
   res.json({

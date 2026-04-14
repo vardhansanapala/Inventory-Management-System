@@ -1,5 +1,5 @@
 const { Schema, model } = require("mongoose");
-const { USER_ROLES } = require("../constants/asset.constants");
+const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 
 const UserSchema = new Schema(
   {
@@ -25,6 +25,11 @@ const UserSchema = new Schema(
       trim: true,
       unique: true,
       sparse: true,
+      default: undefined,
+      set: (value) => {
+        const normalized = String(value || "").trim();
+        return normalized || undefined;
+      },
     },
     role: {
       type: String,
@@ -39,6 +44,12 @@ const UserSchema = new Schema(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    status: {
+      type: String,
+      enum: Object.values(USER_STATUSES),
+      default: USER_STATUSES.ACTIVE,
+      index: true,
     },
     isDeleted: {
       type: Boolean,

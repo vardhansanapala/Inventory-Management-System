@@ -1,4 +1,5 @@
 const { User } = require("../models/User");
+const { USER_STATUSES } = require("../constants/asset.constants");
 const { ApiError } = require("../utils/ApiError");
 const { verifyAuthToken } = require("../utils/jwt");
 
@@ -18,6 +19,7 @@ async function attachUserFromToken(req, _res, next) {
       _id: payload.sub,
       isDeleted: false,
       isActive: true,
+      status: { $in: [USER_STATUSES.ACTIVE, null] },
     });
 
     if (!user) {

@@ -8,20 +8,19 @@ const {
   resumeUser,
   deleteUser,
 } = require("../controllers/user.controller");
-const { MODULE_KEYS } = require("../constants/permissions");
-const { requireAuth, requireModuleAccess, requireRole } = require("../middleware/auth");
-const { USER_ROLES } = require("../constants/asset.constants");
+const { MODULE_KEYS, PERMISSIONS } = require("../constants/permissions");
+const { requireAuth, requireModuleAccess, hasPermission } = require("../middleware/auth");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
 router.use(requireAuth, requireModuleAccess(MODULE_KEYS.USERS));
 router.get("/", asyncHandler(listUsers));
-router.post("/", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(createUser));
-router.patch("/:id", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(updateUser));
-router.patch("/:id/reset-password", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(resetUserPassword));
-router.patch("/:id/pause", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(pauseUser));
-router.patch("/:id/resume", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(resumeUser));
-router.delete("/:id", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(deleteUser));
+router.post("/", hasPermission(PERMISSIONS.CREATE_USER), asyncHandler(createUser));
+router.patch("/:id", hasPermission(PERMISSIONS.EDIT_USER), asyncHandler(updateUser));
+router.patch("/:id/reset-password", hasPermission(PERMISSIONS.RESET_PASSWORD), asyncHandler(resetUserPassword));
+router.patch("/:id/pause", hasPermission(PERMISSIONS.EDIT_USER), asyncHandler(pauseUser));
+router.patch("/:id/resume", hasPermission(PERMISSIONS.EDIT_USER), asyncHandler(resumeUser));
+router.delete("/:id", hasPermission(PERMISSIONS.DELETE_USER), asyncHandler(deleteUser));
 
 module.exports = router;

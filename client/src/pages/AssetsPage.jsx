@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   createAsset,
+  deleteAsset,
   getAssetsBootstrap,
   getAssetAuditLogs,
   getAssetById,
@@ -10,8 +11,10 @@ import {
   listAssets,
   performAssetAction,
   regenerateAssetQr,
-  uploadAssetCsv,
+  updateAsset,
 } from "../api/inventory";
+import { ActionMenu } from "../components/ActionMenu";
+import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import {
@@ -20,6 +23,8 @@ import {
   getReasonOptions,
   getValidActionsForStatus,
 } from "../constants/assetWorkflow";
+import { PERMISSIONS, hasPermission } from "../constants/permissions";
+import { useAuth } from "../context/AuthContext";
 import { getAssetId, getAssetScanUrl } from "../utils/asset.util";
 import { extractAssetId } from "../utils/qrParser.util";
 const sectionTabs = [
@@ -39,7 +44,7 @@ function AssetReference({ assetId, copied, onCopy }) {
       <span>Asset ID</span>
       <div className="asset-reference-row">
         <code>{assetId || "-"}</code>
-        <button className="button ghost" type="button" onClick={onCopy} disabled={!assetId}>
+        <button className="button ghost button-rect button-sm" type="button" onClick={onCopy} disabled={!assetId}>
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
@@ -47,13 +52,55 @@ function AssetReference({ assetId, copied, onCopy }) {
   );
 }
 
-function QrPreviewPanel({
+function ScanUrlField({ scanUrl, copied, onCopy }) {
+  return (
+    <div className="asset-reference">
+      <span>Scan URL</span>
+      <div className="asset-reference-row">
+        <input className="input scan-url-input" value={scanUrl || "-"} readOnly />
+        <button className="button ghost button-rect button-sm" type="button" onClick={onCopy} disabled={!scanUrl}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InfoCardRow({ label, value }) {
+  return (
+    <div className="info-row">
+      <span className="info-label">{label}</span>
+      <strong className="info-value">{value || "-"}</strong>
+    </div>
+  );
+}
+
+function DeviceInfoCard({ asset }) {
+  if (!asset) {
+    return <div className="empty-state">Select a device to see its details.</div>;
+  }
+
+  return (
+    <div className="info-card">
+      <InfoCardRow label="Status" value={asset.status} />
+      <InfoCardRow label="SKU" value={asset.product?.sku} />
+      <InfoCardRow label="Brand / Model" value={`${asset.product?.brand || "-"} ${asset.product?.model || ""}`.trim()} />
+      <InfoCardRow label="Serial Number" value={asset.serialNumber} />
+      <InfoCardRow label="Location" value={asset.location?.name} />
+      <InfoCardRow label="Assigned To" value={asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "Unassigned"} />
+    </div>
+  );
+}
+
+function QRCard({
   asset,
   qrImageUrl,
   qrLoading,
   qrError,
   copiedAssetId,
   onCopyAssetId,
+  copiedScanUrl,
+  onCopyScanUrl,
   onRegenerateQr,
   regeneratingQr = false,
 }) {
@@ -65,15 +112,15 @@ function QrPreviewPanel({
   }
 
   return (
-    <div className="qr-panel qr-panel-inline">
-      <div className="qr-panel-header">
+    <div className="qr-card">
+      <div className="qr-card-header">
         <div>
           <p className="qr-title">Generated QR</p>
           <strong>{assetId}</strong>
         </div>
-        <div className="registry-actions">
+        <div className="qr-card-actions">
           {onRegenerateQr ? (
-            <button className="button ghost" type="button" onClick={onRegenerateQr} disabled={regeneratingQr}>
+            <button className="button ghost button-rect button-sm" type="button" onClick={onRegenerateQr} disabled={regeneratingQr}>
               {regeneratingQr ? "Regenerating..." : "Regenerate QR"}
             </button>
           ) : null}
@@ -83,19 +130,22 @@ function QrPreviewPanel({
 
       {qrLoading ? <div className="page-message">Fetching QR with your authenticated session...</div> : null}
       {qrError ? <div className="page-message error">{qrError}</div> : null}
-      {qrImageUrl ? <img className="qr-preview" src={qrImageUrl} alt={`QR for ${assetId}`} /> : <div className="qr-placeholder">QR preview will appear here as soon as it is available.</div>}
+      <div className="qr-card-body">
+        {qrImageUrl ? (
+          <img className="qr-preview qr-preview-fluid" src={qrImageUrl} alt={`QR for ${assetId}`} />
+        ) : (
+          <div className="qr-placeholder">QR preview will appear here as soon as it is available.</div>
+        )}
+      </div>
       {qrImageUrl ? (
-        <a className="button ghost" href={qrImageUrl} download={`${assetId}-qr.png`}>
+        <a className="button dark button-rect" href={qrImageUrl} download={`${assetId}-qr.png`}>
           Download QR
         </a>
       ) : null}
 
       <AssetReference assetId={assetId} copied={copiedAssetId} onCopy={onCopyAssetId} />
 
-      <div className="detail-item">
-        <span>Scan URL</span>
-        <strong className="scan-link-label">{scanUrl}</strong>
-      </div>
+      <ScanUrlField scanUrl={scanUrl} copied={copiedScanUrl} onCopy={onCopyScanUrl} />
     </div>
   );
 }
@@ -116,6 +166,7 @@ const emptySetupData = {
 };
 
 export function AssetsPage() {
+  const { user: currentUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [setupData, setSetupData] = useState(emptySetupData);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -138,6 +189,7 @@ export function AssetsPage() {
   const [createdAssetQrError, setCreatedAssetQrError] = useState("");
   const [createdAssetQrRegenerating, setCreatedAssetQrRegenerating] = useState(false);
   const [copiedAssetId, setCopiedAssetId] = useState("");
+  const [copiedScanUrl, setCopiedScanUrl] = useState("");
   const [assignMode, setAssignMode] = useState("scan");
   const [assignLookupInput, setAssignLookupInput] = useState("");
   const [assignLookupBusy, setAssignLookupBusy] = useState(false);
@@ -155,6 +207,15 @@ export function AssetsPage() {
   const scanHandledRef = useRef(false);
   const copyTimeoutRef = useRef(null);
   const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+
+  const canCreateAsset = hasPermission(currentUser, PERMISSIONS.CREATE_ASSET);
+  const canUpdateAsset = hasPermission(currentUser, PERMISSIONS.UPDATE_ASSET);
+  const canDeleteAsset = hasPermission(currentUser, PERMISSIONS.DELETE_ASSET);
+  const canEditOrDeleteFromRegistry = canUpdateAsset || canDeleteAsset;
+
+  const [editingAsset, setEditingAsset] = useState(null);
+  const [editForm, setEditForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", status: ASSET_STATUSES.AVAILABLE });
+  const [deleteAssetTarget, setDeleteAssetTarget] = useState(null);
   const [actionForm, setActionForm] = useState({
     action: ASSET_ACTIONS.ASSIGN_DEVICE,
     reason: "OTHER",
@@ -173,12 +234,23 @@ export function AssetsPage() {
     selectedAsset?.status === ASSET_STATUSES.AVAILABLE && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE;
   const selectedAssetRequiresAssignee = actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE;
 
+  const selectedAssetScanUrl = useMemo(() => getAssetScanUrl(selectedAsset), [selectedAsset]);
+  const createdAssetScanUrl = useMemo(() => getAssetScanUrl(latestCreatedAsset), [latestCreatedAsset]);
+
   async function copyAssetId(assetId) {
     if (!assetId || !navigator?.clipboard?.writeText) return;
     await navigator.clipboard.writeText(assetId);
     setCopiedAssetId(assetId);
     window.clearTimeout(copyTimeoutRef.current);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedAssetId(""), 1800);
+  }
+
+  async function copyScanUrl(scanUrl) {
+    if (!scanUrl || !navigator?.clipboard?.writeText) return;
+    await navigator.clipboard.writeText(scanUrl);
+    setCopiedScanUrl(scanUrl);
+    window.clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = window.setTimeout(() => setCopiedScanUrl(""), 1800);
   }
 
   function updateActiveTab(nextTab) {
@@ -190,6 +262,12 @@ export function AssetsPage() {
       return nextParams;
     }, { replace: true });
   }
+
+  useEffect(() => {
+    if (activeTab === "add" && !canCreateAsset) {
+      updateActiveTab("registry");
+    }
+  }, [activeTab, canCreateAsset]);
 
   function loadAssets(filters = {}) {
     return listAssets(filters)
@@ -579,6 +657,64 @@ export function AssetsPage() {
     setCreateForm((current) => ({ ...current, [event.target.name]: event.target.value }));
   }
 
+  function openEditAssetModal(asset) {
+    setEditingAsset(asset);
+    setEditForm({
+      productId: asset?.product?._id || "",
+      serialNumber: asset?.serialNumber || "",
+      locationId: asset?.location?._id || "",
+      assignedToId: asset?.assignedTo?._id || "",
+      status: asset?.status || ASSET_STATUSES.AVAILABLE,
+    });
+  }
+
+  async function submitEditAsset() {
+    if (!editingAsset?._id) return;
+
+    setError("");
+    setMessage("");
+
+    try {
+      await updateAsset(editingAsset._id, {
+        productId: editForm.productId || null,
+        serialNumber: editForm.serialNumber || "",
+        locationId: editForm.locationId || null,
+        assignedToId: editForm.assignedToId || null,
+        status: editForm.status,
+      });
+      setEditingAsset(null);
+      await loadAssets(search ? { search } : {});
+      if (selectedAssetId === editingAsset._id) {
+        await handleSelectAsset(editingAsset._id);
+      }
+      setMessage("Asset updated successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to update asset.");
+    }
+  }
+
+  async function confirmDeleteAsset() {
+    if (!deleteAssetTarget?._id) return;
+
+    setError("");
+    setMessage("");
+
+    try {
+      await deleteAsset(deleteAssetTarget._id);
+      const deletedId = deleteAssetTarget._id;
+      setDeleteAssetTarget(null);
+      await loadAssets(search ? { search } : {});
+      if (selectedAssetId === deletedId) {
+        setSelectedAssetId("");
+        setSelectedAsset(null);
+        setAssetLogs([]);
+      }
+      setMessage("Asset deleted successfully.");
+    } catch (err) {
+      setError(err.message || "Unable to delete asset.");
+    }
+  }
+
   function handleActionChange(event) {
     const { name, value } = event.target;
 
@@ -608,6 +744,7 @@ export function AssetsPage() {
     setMessage("");
 
     try {
+      setCreatedAssetQrRegenerating(true);
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
       setMessage(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`);
@@ -616,6 +753,8 @@ export function AssetsPage() {
       await handleSelectAsset(createdAsset._id);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setCreatedAssetQrRegenerating(false);
     }
   }
 
@@ -689,24 +828,6 @@ export function AssetsPage() {
     }
   }
 
-  async function submitCsv(event) {
-    event.preventDefault();
-    const file = event.target.file.files?.[0];
-
-    if (!file) {
-      setError("Select a CSV file first.");
-      return;
-    }
-
-    try {
-      const result = await uploadAssetCsv({ file });
-      setMessage(`CSV queued successfully. Job ID: ${result.jobId}`);
-      event.target.reset();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   if (setupLoading) {
     return <div className="page-message">Loading assets workspace...</div>;
   }
@@ -717,7 +838,9 @@ export function AssetsPage() {
       {error ? <div className="page-message error">{error}</div> : null}
 
       <div className="asset-tabs" role="tablist" aria-label="Device management sections">
-        {sectionTabs.map((tab) => {
+        {sectionTabs
+          .filter((tab) => (tab.id === "add" ? canCreateAsset : true))
+          .map((tab) => {
           const isActive = activeTab === tab.id;
 
           return (
@@ -755,6 +878,7 @@ export function AssetsPage() {
                   <th>Status</th>
                   <th>Location</th>
                   <th>Assignee</th>
+                  {canEditOrDeleteFromRegistry ? <th>Actions</th> : null}
                   <th>Select</th>
                 </tr>
               </thead>
@@ -769,16 +893,40 @@ export function AssetsPage() {
                     <td><StatusPill status={asset.status} /></td>
                     <td>{asset.location?.name || "-"}</td>
                     <td>{asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "-"}</td>
+                    {canEditOrDeleteFromRegistry ? (
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <ActionMenu
+                          label={`Asset actions for ${getAssetId(asset)}`}
+                          items={[
+                            {
+                              id: "edit",
+                              label: "Edit Asset",
+                              icon: "✏️",
+                              hidden: !canUpdateAsset,
+                              onClick: () => openEditAssetModal(asset),
+                            },
+                            {
+                              id: "delete",
+                              label: "Delete Asset",
+                              icon: "🗑️",
+                              danger: true,
+                              hidden: !canDeleteAsset,
+                              onClick: () => setDeleteAssetTarget(asset),
+                            },
+                          ]}
+                        />
+                      </td>
+                    ) : null}
                     <td>
                       <button
-                        className={selectedAssetId === asset._id ? "table-button active" : "table-button"}
+                        className={selectedAssetId === asset._id ? "button ghost button-rect button-sm is-selected" : "button ghost button-rect button-sm"}
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
                           handleSelectAsset(asset._id);
                         }}
                       >
-                        {selectedAssetId === asset._id ? "Selected" : "Select Device"}
+                        {selectedAssetId === asset._id ? "Selected" : "Select"}
                       </button>
                     </td>
                   </tr>
@@ -789,10 +937,11 @@ export function AssetsPage() {
         </SectionCard>
       ) : null}
 
-      {activeTab === "add" ? (
+      {activeTab === "add" && canCreateAsset ? (
         <SectionCard title="Create Device" subtitle="Create a physical asset and immediately preview its QR in the same section">
-          <div className="two-column-grid">
-            <form className="form-grid" onSubmit={submitAsset}>
+          <div className="assets-two-col">
+            <SectionCard title="Device details" subtitle="Fill the fields, then create the device.">
+              <form className="form-grid wide-grid" onSubmit={submitAsset}>
               <select className="input" name="productId" value={createForm.productId} onChange={handleCreateChange} required>
                 <option value="">Select SKU</option>
                 {setupData.products.map((product) => <option key={product._id} value={product._id}>{product.sku} - {product.brand} {product.model}</option>)}
@@ -806,28 +955,38 @@ export function AssetsPage() {
                 <option value="">Assigned To (optional)</option>
                 {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
               </select>
-              <textarea className="input textarea" name="notes" placeholder="Creation notes" value={createForm.notes} onChange={handleCreateChange} />
-              <button className="button" type="submit">Create Device And Generate QR</button>
-            </form>
+              <textarea className="input textarea assets-full" name="notes" placeholder="Creation notes" value={createForm.notes} onChange={handleCreateChange} />
+              <div className="form-actions assets-full">
+                <button className="button dark button-rect" type="submit" disabled={createdAssetQrRegenerating}>
+                  {createdAssetQrRegenerating ? "Creating..." : "Create Device"}
+                </button>
+              </div>
+              </form>
+            </SectionCard>
 
-            <QrPreviewPanel
-              asset={latestCreatedAsset}
-              qrImageUrl={createdAssetQrUrl}
-              qrLoading={createdAssetQrLoading}
-              qrError={createdAssetQrError}
-              copiedAssetId={copiedAssetId === getAssetId(latestCreatedAsset)}
-              onCopyAssetId={() => copyAssetId(getAssetId(latestCreatedAsset))}
-              onRegenerateQr={() => handleRegenerateQr(latestCreatedAsset, "created")}
-              regeneratingQr={createdAssetQrRegenerating}
-            />
+            <SectionCard title="QR + actions" subtitle="Download, copy, or regenerate the QR for this device.">
+              <QRCard
+                asset={latestCreatedAsset}
+                qrImageUrl={createdAssetQrUrl}
+                qrLoading={createdAssetQrLoading}
+                qrError={createdAssetQrError}
+                copiedAssetId={copiedAssetId === getAssetId(latestCreatedAsset)}
+                onCopyAssetId={() => copyAssetId(getAssetId(latestCreatedAsset))}
+                copiedScanUrl={copiedScanUrl === createdAssetScanUrl}
+                onCopyScanUrl={() => copyScanUrl(createdAssetScanUrl)}
+                onRegenerateQr={() => handleRegenerateQr(latestCreatedAsset, "created")}
+                regeneratingQr={createdAssetQrRegenerating}
+              />
+            </SectionCard>
           </div>
         </SectionCard>
       ) : null}
 
       {activeTab === "assign" ? (
-        <div className="two-column-grid">
-          <SectionCard title="Selected Device" subtitle="This panel shows the exact device that actions will target">
-            <div className="assign-selector">
+        <div className="assets-two-col">
+          <div className="page-stack">
+            <SectionCard title="Select Device" subtitle="Scan a QR code or enter an Asset ID to target actions.">
+              <div className="assign-selector">
               <div className="mode-toggle" role="tablist" aria-label="Device selection mode">
                 <button type="button" className={assignMode === "scan" ? "button dark" : "button ghost"} onClick={startScanner}>Scan QR</button>
                 <button
@@ -886,92 +1045,176 @@ export function AssetsPage() {
                 <span>Decoded QR Value</span>
                 <strong>{lastDecodedValue || "No scan yet"}</strong>
               </div>
-            </div>
-
-            {selectedAsset ? (
-              <div className="device-detail-panel">
-                <div className="selected-asset-banner">
-                  <span>Active Device</span>
-                  <strong>{getAssetId(selectedAsset)}</strong>
-                </div>
-
-                <div className="device-summary-grid">
-                  <div className="detail-list">
-                    <div className="detail-item"><span>Status</span><StatusPill status={selectedAsset.status} /></div>
-                    <div className="detail-item"><span>SKU</span><strong>{selectedAsset.product?.sku || "-"}</strong></div>
-                    <div className="detail-item"><span>Brand / Model</span><strong>{selectedAsset.product?.brand || "-"} {selectedAsset.product?.model || ""}</strong></div>
-                    <div className="detail-item"><span>Serial Number</span><strong>{selectedAsset.serialNumber || "-"}</strong></div>
-                    <div className="detail-item"><span>Location</span><strong>{selectedAsset.location?.name || "-"}</strong></div>
-                    <div className="detail-item">
-                      <span>Assigned To</span>
-                      <strong>{selectedAsset.assignedTo ? `${selectedAsset.assignedTo.firstName} ${selectedAsset.assignedTo.lastName}` : "Unassigned"}</strong>
-                    </div>
-                  </div>
-
-                  <QrPreviewPanel
-                    asset={selectedAsset}
-                    qrImageUrl={selectedAssetQrUrl}
-                    qrLoading={selectedAssetQrLoading}
-                    qrError={selectedAssetQrError}
-                    copiedAssetId={copiedAssetId === getAssetId(selectedAsset)}
-                    onCopyAssetId={() => copyAssetId(getAssetId(selectedAsset))}
-                    onRegenerateQr={() => handleRegenerateQr(selectedAsset, "selected")}
-                    regeneratingQr={selectedAssetQrRegenerating}
-                  />
-                </div>
               </div>
-            ) : <div className="empty-state">Scan a QR code or enter an Asset ID above to auto-select a device for assignment.</div>}
-          </SectionCard>
+            </SectionCard>
 
-          <SectionCard title="Action Center" subtitle="Run status/location/assignee changes only on the selected device">
-            <form className="form-grid" onSubmit={submitAction}>
-              <fieldset className="action-fieldset" disabled={!selectedAsset || !validActionOptions.length}>
-                <div className="selected-asset-banner">
-                  <span>Action Target</span>
-                  <strong>{getAssetId(selectedAsset) || "No device selected"}</strong>
-                </div>
+            <SectionCard title="Device Info" subtitle="The selected device details will appear here.">
+              <DeviceInfoCard asset={selectedAsset} />
+            </SectionCard>
+          </div>
 
-                {!selectedAsset ? <div className="action-hint">Choose a device first. This makes it obvious which asset the action will affect.</div> : null}
-                {selectedAsset && !validActionOptions.length ? <div className="action-hint">No transitions are available for the current status.</div> : null}
+          <div className="page-stack">
+            <SectionCard title="QR + actions" subtitle="QR tools and workflow actions for the selected device.">
+              <div className="page-stack">
+                <QRCard
+                  asset={selectedAsset}
+                  qrImageUrl={selectedAssetQrUrl}
+                  qrLoading={selectedAssetQrLoading}
+                  qrError={selectedAssetQrError}
+                  copiedAssetId={copiedAssetId === getAssetId(selectedAsset)}
+                  onCopyAssetId={() => copyAssetId(getAssetId(selectedAsset))}
+                  copiedScanUrl={copiedScanUrl === selectedAssetScanUrl}
+                  onCopyScanUrl={() => copyScanUrl(selectedAssetScanUrl)}
+                  onRegenerateQr={() => handleRegenerateQr(selectedAsset, "selected")}
+                  regeneratingQr={selectedAssetQrRegenerating}
+                />
 
-                <select className="input" name="action" value={actionForm.action} onChange={handleActionChange} required>
-                  {validActionOptions.length ? validActionOptions.map((action) => <option key={action} value={action}>{action}</option>) : <option value="">No valid actions</option>}
-                </select>
-                <select className="input" name="reason" value={actionForm.reason} onChange={handleActionChange} required>
-                  {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                </select>
-                <input className="input" name="customReason" placeholder="Custom reason" value={actionForm.customReason} onChange={handleActionChange} />
-                <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange}>
-                  <option value="">Target Location</option>
-                  {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
-                </select>
-                {selectedAssetRequiresAssignee ? (
-                  <select className="input" name="assignedToId" value={actionForm.assignedToId} onChange={handleActionChange} required>
-                    <option value="">Target Assignee</option>
-                    {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
-                  </select>
-                ) : null}
-                {selectedAssetRequiresExternalRecipient ? (
-                  <input className="input" name="externalRecipient" placeholder="External Recipient" value={actionForm.externalRecipient} onChange={handleActionChange} required />
-                ) : null}
-                {selectedAsset?.status === ASSET_STATUSES.ASSIGNED && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ? (
-                  <div className="action-hint">This device is assigned, so SEND_OUTSIDE will keep the current assignee as the outside holder.</div>
-                ) : null}
-                {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="issue" placeholder="Issue (repair only)" value={actionForm.issue} onChange={handleActionChange} /> : null}
-                {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="vendor" placeholder="Vendor (repair only)" value={actionForm.vendor} onChange={handleActionChange} /> : null}
-                {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" type="number" name="cost" placeholder="Cost" value={actionForm.cost} onChange={handleActionChange} /> : null}
-                <textarea className="input textarea" name="notes" placeholder="Action notes" value={actionForm.notes} onChange={handleActionChange} />
-                <button className="button dark" type="submit" disabled={!selectedAsset || !validActionOptions.length}>Apply Action To Selected Device</button>
-              </fieldset>
-            </form>
-          </SectionCard>
+                <div className="divider-line" />
+
+                <form className="form-grid" onSubmit={submitAction}>
+                  <fieldset className="action-fieldset" disabled={!selectedAsset || !validActionOptions.length}>
+                    <div className="selected-asset-banner">
+                      <span>Action Target</span>
+                      <strong>{getAssetId(selectedAsset) || "No device selected"}</strong>
+                    </div>
+
+                    {!selectedAsset ? <div className="action-hint">Choose a device first. Actions apply only to the selected device.</div> : null}
+                    {selectedAsset && !validActionOptions.length ? <div className="action-hint">No transitions are available for the current status.</div> : null}
+
+                    <select className="input" name="action" value={actionForm.action} onChange={handleActionChange} required>
+                      {validActionOptions.length ? validActionOptions.map((action) => <option key={action} value={action}>{action}</option>) : <option value="">No valid actions</option>}
+                    </select>
+                    <select className="input" name="reason" value={actionForm.reason} onChange={handleActionChange} required>
+                      {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                    </select>
+                    <input className="input" name="customReason" placeholder="Custom reason" value={actionForm.customReason} onChange={handleActionChange} />
+                    <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange}>
+                      <option value="">Target Location</option>
+                      {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
+                    </select>
+                    {selectedAssetRequiresAssignee ? (
+                      <select className="input" name="assignedToId" value={actionForm.assignedToId} onChange={handleActionChange} required>
+                        <option value="">Target Assignee</option>
+                        {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
+                      </select>
+                    ) : null}
+                    {selectedAssetRequiresExternalRecipient ? (
+                      <input className="input" name="externalRecipient" placeholder="External Recipient" value={actionForm.externalRecipient} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAsset?.status === ASSET_STATUSES.ASSIGNED && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ? (
+                      <div className="action-hint">This device is assigned, so SEND_OUTSIDE will keep the current assignee as the outside holder.</div>
+                    ) : null}
+                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="issue" placeholder="Issue (repair only)" value={actionForm.issue} onChange={handleActionChange} /> : null}
+                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="vendor" placeholder="Vendor (repair only)" value={actionForm.vendor} onChange={handleActionChange} /> : null}
+                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" type="number" name="cost" placeholder="Cost" value={actionForm.cost} onChange={handleActionChange} /> : null}
+                    <textarea className="input textarea" name="notes" placeholder="Action notes" value={actionForm.notes} onChange={handleActionChange} />
+                    <button className="button dark button-rect" type="submit" disabled={!selectedAsset || !validActionOptions.length}>
+                      Apply Action
+                    </button>
+                  </fieldset>
+                </form>
+              </div>
+            </SectionCard>
+          </div>
         </div>
       ) : null}
 
-      <form className="inline-form" onSubmit={submitCsv}>
-        <input className="input" type="file" name="file" accept=".csv" />
-        <button className="button" type="submit">Upload CSV</button>
-      </form>
+      {editingAsset ? (
+        <Modal
+          title="Edit Asset"
+          subtitle={`Update details for ${getAssetId(editingAsset)}`}
+          onClose={() => setEditingAsset(null)}
+          actions={
+            <>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingAsset(null)}>
+                Cancel
+              </button>
+              <button className="button dark button-rect" type="button" onClick={submitEditAsset} disabled={!canUpdateAsset}>
+                Save
+              </button>
+            </>
+          }
+        >
+          <div className="form-grid wide-grid">
+            <label className="field-stack">
+              <span>SKU</span>
+              <select className="input" value={editForm.productId} onChange={(event) => setEditForm((c) => ({ ...c, productId: event.target.value }))} required>
+                <option value="">Select SKU</option>
+                {setupData.products.map((product) => (
+                  <option key={product._id} value={product._id}>
+                    {product.sku} - {product.brand} {product.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field-stack">
+              <span>Serial Number</span>
+              <input className="input" value={editForm.serialNumber} onChange={(event) => setEditForm((c) => ({ ...c, serialNumber: event.target.value }))} />
+            </label>
+
+            <label className="field-stack">
+              <span>Location</span>
+              <select className="input" value={editForm.locationId} onChange={(event) => setEditForm((c) => ({ ...c, locationId: event.target.value }))} required>
+                <option value="">Select location</option>
+                {setupData.locations.map((location) => (
+                  <option key={location._id} value={location._id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field-stack">
+              <span>Assigned User</span>
+              <select className="input" value={editForm.assignedToId} onChange={(event) => setEditForm((c) => ({ ...c, assignedToId: event.target.value }))}>
+                <option value="">Unassigned</option>
+                {setupData.users.map((user) => (
+                  <option key={user._id} value={user._id}>
+                    {user.firstName} {user.lastName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field-stack">
+              <span>Status</span>
+              <select className="input" value={editForm.status} onChange={(event) => setEditForm((c) => ({ ...c, status: event.target.value }))} required>
+                {Object.values(ASSET_STATUSES).map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </Modal>
+      ) : null}
+
+      {deleteAssetTarget ? (
+        <Modal
+          title="Delete Asset"
+          subtitle="Are you sure you want to delete this asset?"
+          onClose={() => setDeleteAssetTarget(null)}
+          actions={
+            <>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeleteAssetTarget(null)}>
+                Cancel
+              </button>
+              <button className="button danger button-rect" type="button" onClick={confirmDeleteAsset} disabled={!canDeleteAsset}>
+                Delete
+              </button>
+            </>
+          }
+        >
+          <div className="page-stack">
+            <p>
+              You are deleting <strong>{getAssetId(deleteAssetTarget)}</strong>.
+            </p>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }
+

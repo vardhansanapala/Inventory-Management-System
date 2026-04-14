@@ -1,5 +1,5 @@
 const { isValidObjectId, startSession } = require("mongoose");
-const { ACTION_REASONS } = require("../constants/asset.constants");
+const { ACTION_REASONS, ASSET_STATUSES } = require("../constants/asset.constants");
 const { Asset } = require("../models/Asset");
 const { AuditLog } = require("../models/AuditLog");
 const { Location } = require("../models/Location");
@@ -10,6 +10,8 @@ const { ApiError } = require("../utils/ApiError");
 const { createAssetWithQr, regenerateAssetQr } = require("../services/assetCreation.service");
 const { deleteObjectIfExists } = require("../services/s3.service");
 const { applyAssetAction } = require("../services/assetAction.service");
+const { PERMISSIONS } = require("../constants/permissions");
+const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
 
 async function getAssetBootstrap(req, res) {
   const [products, locations, users] = await Promise.all([
@@ -222,6 +224,20 @@ async function createAsset(req, res) {
       .populate("location")
       .populate("assignedTo", "firstName lastName email");
 
+    await RbacAuditLog.create({
+      action: "ASSET_CREATED",
+      performedBy: performedById,
+      targetId: asset._id,
+      targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+      metadata: {
+        assetId: asset.assetId,
+        productId: asset.product?._id || asset.product,
+        locationId: asset.location?._id || asset.location,
+        assignedToId: asset.assignedTo?._id || asset.assignedTo || null,
+        status: asset.status,
+      },
+    });
+
     res.status(201).json(serializeAsset(asset));
   } catch (error) {
     await session.abortTransaction();
@@ -274,6 +290,21 @@ async function performAssetAction(req, res) {
       .populate("location")
       .populate("assignedTo", "firstName lastName email");
 
+    if (String(req.body.action || "") === "ASSIGN_DEVICE") {
+      await RbacAuditLog.create({
+        action: "ASSET_ASSIGNED",
+        performedBy: performedById,
+        targetId: asset._id,
+        targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+        metadata: {
+          assetId: asset.assetId,
+          toAssigneeId: asset.assignedTo?._id || asset.assignedTo || null,
+          toLocationId: asset.location?._id || asset.location || null,
+          status: asset.status,
+        },
+      });
+    }
+
     return res.json({
       duplicate: false,
       asset: serializeAsset(asset),
@@ -287,6 +318,120 @@ async function performAssetAction(req, res) {
   }
 }
 
+async function updateAsset(req, res) {
+  const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+  if (!permissions.includes(PERMISSIONS.UPDATE_ASSET)) {
+    throw new ApiError(403, "Missing permission: UPDATE_ASSET");
+  }
+
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId));
+  if (!asset) {
+    throw new ApiError(404, "Asset not found");
+  }
+
+  const before = {
+    product: asset.product,
+    serialNumber: asset.serialNumber,
+    location: asset.location,
+    assignedTo: asset.assignedTo,
+    status: asset.status,
+  };
+
+  if (req.body.productId !== undefined) {
+    const product = await Product.findOne({ _id: req.body.productId, isDeleted: false });
+    if (!product) {
+      throw new ApiError(400, "Invalid product reference");
+    }
+    asset.product = product._id;
+  }
+
+  if (req.body.serialNumber !== undefined) {
+    asset.serialNumber = String(req.body.serialNumber || "").trim() || null;
+  }
+
+  if (req.body.locationId !== undefined) {
+    const location = await Location.findOne({ _id: req.body.locationId, isDeleted: false });
+    if (!location) {
+      throw new ApiError(400, "Invalid location reference");
+    }
+    asset.location = location._id;
+  }
+
+  if (req.body.assignedToId !== undefined) {
+    if (!req.body.assignedToId) {
+      asset.assignedTo = null;
+    } else {
+      const user = await User.findOne({ _id: req.body.assignedToId, isDeleted: false });
+      if (!user) {
+        throw new ApiError(400, "Invalid assignee reference");
+      }
+      asset.assignedTo = user._id;
+    }
+  }
+
+  if (req.body.status !== undefined) {
+    const nextStatus = String(req.body.status || "").trim();
+    if (!Object.values(ASSET_STATUSES).includes(nextStatus)) {
+      throw new ApiError(400, "Invalid asset status");
+    }
+    asset.status = nextStatus;
+  }
+
+  await asset.save();
+
+  const populated = await Asset.findById(asset._id)
+    .populate("product")
+    .populate("location")
+    .populate("assignedTo", "firstName lastName email");
+
+  await RbacAuditLog.create({
+    action: "ASSET_UPDATED",
+    performedBy: req.user?._id,
+    targetId: asset._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+    metadata: {
+      assetId: populated.assetId,
+      before,
+      after: {
+        product: populated.product?._id || populated.product,
+        serialNumber: populated.serialNumber,
+        location: populated.location?._id || populated.location,
+        assignedTo: populated.assignedTo?._id || populated.assignedTo || null,
+        status: populated.status,
+      },
+    },
+  });
+
+  res.json(serializeAsset(populated));
+}
+
+async function deleteAsset(req, res) {
+  const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+  if (!permissions.includes(PERMISSIONS.DELETE_ASSET)) {
+    throw new ApiError(403, "Missing permission: DELETE_ASSET");
+  }
+
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId));
+  if (!asset) {
+    throw new ApiError(404, "Asset not found");
+  }
+
+  asset.isDeleted = true;
+  await asset.save();
+
+  await RbacAuditLog.create({
+    action: "ASSET_DELETED",
+    performedBy: req.user?._id,
+    targetId: asset._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+    metadata: {
+      assetId: asset.assetId,
+    },
+  });
+
+  res.json({ message: "Asset deleted successfully" });
+}
+
 module.exports = {
   getAssetBootstrap,
   listAssets,
@@ -297,4 +442,6 @@ module.exports = {
   getAssetAuditLogs,
   createAsset,
   performAssetAction,
+  updateAsset,
+  deleteAsset,
 };

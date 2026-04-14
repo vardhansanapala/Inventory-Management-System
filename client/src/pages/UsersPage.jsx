@@ -9,7 +9,9 @@ import {
   updateUser,
 } from "../api/inventory";
 import { ActionMenu } from "../components/ActionMenu";
+import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
+import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from "../constants/permissions";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 
@@ -22,7 +24,7 @@ const emptyCreateForm = {
   firstName: "",
   lastName: "",
   email: "",
-  role: ROLES.ADMIN,
+  role: ROLES.EMPLOYEE,
   status: USER_STATUSES.ACTIVE,
   password: "",
   confirmPassword: "",
@@ -60,25 +62,6 @@ function generateStrongPassword() {
   return Array.from({ length }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
 }
 
-function UserModal({ title, subtitle, children, onClose }) {
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal users-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <h2>{title}</h2>
-            {subtitle ? <p className="table-subtle">{subtitle}</p> : null}
-          </div>
-          <button className="icon-action-button" type="button" onClick={onClose} aria-label="Close modal">
-            ×
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function PasswordField({ label, value, onChange, visible, onToggle, error, autoComplete = "new-password" }) {
   return (
     <label className="field-stack">
@@ -108,13 +91,22 @@ export function UsersPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const isSuperAdmin = currentUser?.role === ROLES.SUPER_ADMIN;
+  const canCreateUser = hasPermission(currentUser, PERMISSIONS.CREATE_USER);
+  const canEditUser = hasPermission(currentUser, PERMISSIONS.EDIT_USER);
+  const canDeleteUser = hasPermission(currentUser, PERMISSIONS.DELETE_USER);
+  const canResetPassword = hasPermission(currentUser, PERMISSIONS.RESET_PASSWORD);
+  const canSeeUserActions = canEditUser || canDeleteUser || canResetPassword;
 
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
+  const [createManageableRoles, setCreateManageableRoles] = useState([]);
+  const [createPermissions, setCreatePermissions] = useState([]);
 
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState(emptyEditForm);
+  const [editManageableRoles, setEditManageableRoles] = useState([]);
+  const [editPermissions, setEditPermissions] = useState([]);
 
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [passwordForm, setPasswordForm] = useState(emptyPasswordForm);
@@ -156,6 +148,12 @@ export function UsersPage() {
     fetchUsers();
   }, []);
 
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    const defaults = ROLE_DEFAULTS[createForm.role]?.permissions || [];
+    setCreatePermissions((current) => (current.length ? current : defaults));
+  }, [createForm.role, isSuperAdmin]);
+
   async function withRefresh(run, successMessage) {
     try {
       setSubmitting(true);
@@ -185,10 +183,14 @@ export function UsersPage() {
         role: createForm.role,
         status: createForm.status,
         password: createForm.password,
+        permissions: isSuperAdmin ? createPermissions : undefined,
+        manageableRoles: createForm.role === ROLES.ADMIN && isSuperAdmin ? createManageableRoles : undefined,
       });
       setCreateForm(emptyCreateForm);
       setShowCreatePassword(false);
       setShowCreateConfirm(false);
+      setCreateManageableRoles([]);
+      setCreatePermissions([]);
     }, "User created successfully.");
   }
 
@@ -203,6 +205,8 @@ export function UsersPage() {
         lastName: editForm.lastName.trim(),
         role: editForm.role,
         status: editForm.status,
+        permissions: isSuperAdmin ? editPermissions : undefined,
+        manageableRoles: isSuperAdmin && editForm.role === ROLES.ADMIN ? editManageableRoles : undefined,
       });
       setEditingUser(null);
     }, "User updated successfully.");
@@ -253,6 +257,8 @@ export function UsersPage() {
       role: targetUser.role || ROLES.EMPLOYEE,
       status: targetUser.status || USER_STATUSES.ACTIVE,
     });
+    setEditPermissions(Array.isArray(targetUser.permissions) ? targetUser.permissions : []);
+    setEditManageableRoles(Array.isArray(targetUser.manageableRoles) ? targetUser.manageableRoles : []);
   }
 
   function openResetModal(targetUser) {
@@ -273,7 +279,7 @@ export function UsersPage() {
     setShowCreateConfirm(true);
   }
 
-  const roleOptions = [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.EMPLOYEE];
+  const roleOptions = [ROLES.ADMIN, ROLES.EMPLOYEE];
 
   if (loading) {
     return <div className="page-message">Loading users...</div>;
@@ -287,9 +293,9 @@ export function UsersPage() {
       <SectionCard
         title="User Management"
         subtitle="Create accounts, manage roles, and control account status with super-admin-only actions."
-        actions={<span className="role-chip">Super admin only</span>}
+        actions={<span className="role-chip">Permission-aware</span>}
       >
-        {isSuperAdmin ? (
+        {canCreateUser ? (
         <form className="form-grid users-form-grid" onSubmit={handleCreate}>
           <label className="field-stack">
             <span>First Name</span>
@@ -321,7 +327,22 @@ export function UsersPage() {
           </label>
           <label className="field-stack">
             <span>Role</span>
-            <select className="input" value={createForm.role} onChange={(event) => setCreateForm({ ...createForm, role: event.target.value })}>
+            <select
+              className="input"
+              value={createForm.role}
+              onChange={(event) => {
+                const nextRole = event.target.value;
+                setCreateForm({ ...createForm, role: nextRole });
+                if (nextRole === ROLES.ADMIN) {
+                  setCreateManageableRoles([ROLES.EMPLOYEE]);
+                } else {
+                  setCreateManageableRoles([]);
+                }
+                if (isSuperAdmin) {
+                  setCreatePermissions(ROLE_DEFAULTS[nextRole]?.permissions || []);
+                }
+              }}
+            >
               {roleOptions.map((role) => (
                 <option key={role} value={role}>
                   {role}
@@ -329,6 +350,104 @@ export function UsersPage() {
               ))}
             </select>
           </label>
+          {isSuperAdmin && createForm.role === ROLES.ADMIN ? (
+            <div className="field-stack">
+              <span>Manageable Roles</span>
+              <div className="mini-list">
+                {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
+                  <label key={role} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={createManageableRoles.includes(role)}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setCreateManageableRoles((current) => {
+                          if (checked) return Array.from(new Set([...current, role]));
+                          return current.filter((r) => r !== role);
+                        });
+                      }}
+                      disabled={role === ROLES.SUPER_ADMIN}
+                    />
+                    {role}
+                  </label>
+                ))}
+              </div>
+              <p className="table-subtle">SUPER_ADMIN is intentionally not assignable.</p>
+            </div>
+          ) : null}
+          {isSuperAdmin ? (
+            <div className="field-stack users-permissions">
+              <span>Permissions</span>
+              <div className="permission-groups">
+                <div className="permission-group">
+                  <strong className="table-subtle">USER MANAGEMENT</strong>
+                  {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
+                    <label key={perm} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={createPermissions.includes(perm)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setCreatePermissions((current) => {
+                            if (checked) return Array.from(new Set([...current, perm]));
+                            return current.filter((p) => p !== perm);
+                          });
+                        }}
+                      />
+                      {perm}
+                    </label>
+                  ))}
+                </div>
+                <div className="permission-group">
+                  <strong className="table-subtle">ASSET MANAGEMENT</strong>
+                  {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
+                    <label key={perm} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={createPermissions.includes(perm)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setCreatePermissions((current) => {
+                            if (checked) return Array.from(new Set([...current, perm]));
+                            return current.filter((p) => p !== perm);
+                          });
+                        }}
+                      />
+                      {perm}
+                    </label>
+                  ))}
+                </div>
+                <div className="permission-group">
+                  <strong className="table-subtle">PRODUCT / SKU</strong>
+                  {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
+                    <label key={perm} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={createPermissions.includes(perm)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setCreatePermissions((current) => {
+                            if (checked) return Array.from(new Set([...current, perm]));
+                            return current.filter((p) => p !== perm);
+                          });
+                        }}
+                      />
+                      {perm}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="inline-form">
+                <button
+                  className="button ghost"
+                  type="button"
+                  onClick={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
+                >
+                  Reset to role defaults
+                </button>
+              </div>
+            </div>
+          ) : null}
           <label className="field-stack">
             <span>Status</span>
             <select className="input" value={createForm.status} onChange={(event) => setCreateForm({ ...createForm, status: event.target.value })}>
@@ -365,7 +484,7 @@ export function UsersPage() {
           </button>
         </form>
         ) : (
-          <div className="page-message">Only SUPER_ADMIN can create or manage users.</div>
+          <div className="page-message">You do not have permission to create users.</div>
         )}
       </SectionCard>
 
@@ -378,7 +497,7 @@ export function UsersPage() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                {isSuperAdmin ? <th>Actions</th> : null}
+                {canSeeUserActions ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -402,7 +521,7 @@ export function UsersPage() {
                           {targetUser.status || USER_STATUSES.ACTIVE}
                         </span>
                       </td>
-                      {isSuperAdmin ? (
+                      {canSeeUserActions ? (
                         <td>
                           <ActionMenu
                             label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
@@ -411,26 +530,28 @@ export function UsersPage() {
                                 id: "edit",
                                 label: "Edit User",
                                 icon: "✏️",
+                                hidden: !canEditUser,
                                 onClick: () => openEditModal(targetUser),
                               },
                               {
                                 id: "reset",
                                 label: "Reset Password",
                                 icon: "🔑",
+                                hidden: !canResetPassword,
                                 onClick: () => openResetModal(targetUser),
                               },
                               {
                                 id: "pauseResume",
                                 label: targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account",
                                 icon: targetUser.status === USER_STATUSES.PAUSED ? "▶" : "⏸",
-                                hidden: !canPauseResume,
+                                hidden: !canPauseResume || !canEditUser,
                                 onClick: () => handlePauseResume(targetUser),
                               },
                               {
                                 id: "delete",
                                 label: "Delete User",
                                 icon: "🗑️",
-                                hidden: !canDelete,
+                                hidden: !canDelete || !canDeleteUser,
                                 danger: true,
                                 onClick: () => setDeleteUserTarget(targetUser),
                               },
@@ -443,7 +564,7 @@ export function UsersPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={isSuperAdmin ? 5 : 4}>No users found.</td>
+                  <td colSpan={canSeeUserActions ? 5 : 4}>No users found.</td>
                 </tr>
               )}
             </tbody>
@@ -452,7 +573,21 @@ export function UsersPage() {
       </SectionCard>
 
       {editingUser ? (
-        <UserModal title="Edit User" subtitle={`Email is fixed for ${editingUser.email}`} onClose={() => setEditingUser(null)}>
+        <Modal
+          title="Edit User"
+          subtitle={`Email is fixed for ${editingUser.email}`}
+          onClose={() => setEditingUser(null)}
+          actions={
+            <>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingUser(null)} disabled={submitting}>
+                Cancel
+              </button>
+              <button className="button dark button-rect" type="button" onClick={handleEdit} disabled={submitting}>
+                {submitting ? "Saving..." : "Save Changes"}
+              </button>
+            </>
+          }
+        >
           <div className="form-grid">
             <label className="field-stack">
               <span>First Name</span>
@@ -480,6 +615,103 @@ export function UsersPage() {
                 ))}
               </select>
             </label>
+            {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
+              <div className="field-stack">
+                <span>Manageable Roles</span>
+                <div className="mini-list">
+                  {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
+                    <label key={role} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={editManageableRoles.includes(role)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setEditManageableRoles((current) => {
+                            if (checked) return Array.from(new Set([...current, role]));
+                            return current.filter((r) => r !== role);
+                          });
+                        }}
+                        disabled={role === ROLES.SUPER_ADMIN}
+                      />
+                      {role}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {isSuperAdmin ? (
+              <div className="field-stack users-permissions">
+                <span>Permissions</span>
+                <div className="permission-groups">
+                  <div className="permission-group">
+                    <strong className="table-subtle">USER MANAGEMENT</strong>
+                    {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
+                      <label key={perm} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={editPermissions.includes(perm)}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setEditPermissions((current) => {
+                              if (checked) return Array.from(new Set([...current, perm]));
+                              return current.filter((p) => p !== perm);
+                            });
+                          }}
+                        />
+                        {perm}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="permission-group">
+                    <strong className="table-subtle">ASSET MANAGEMENT</strong>
+                    {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
+                      <label key={perm} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={editPermissions.includes(perm)}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setEditPermissions((current) => {
+                              if (checked) return Array.from(new Set([...current, perm]));
+                              return current.filter((p) => p !== perm);
+                            });
+                          }}
+                        />
+                        {perm}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="permission-group">
+                    <strong className="table-subtle">PRODUCT / SKU</strong>
+                    {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
+                      <label key={perm} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={editPermissions.includes(perm)}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setEditPermissions((current) => {
+                              if (checked) return Array.from(new Set([...current, perm]));
+                              return current.filter((p) => p !== perm);
+                            });
+                          }}
+                        />
+                        {perm}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="inline-form">
+                  <button
+                    className="button ghost"
+                    type="button"
+                    onClick={() => setEditPermissions(ROLE_DEFAULTS[editForm.role]?.permissions || [])}
+                  >
+                    Reset to role defaults
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <label className="field-stack">
               <span>Status</span>
               <select className="input" value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>
@@ -488,22 +720,24 @@ export function UsersPage() {
               </select>
             </label>
           </div>
-          <div className="modal-actions">
-            <button className="button ghost" type="button" onClick={() => setEditingUser(null)} disabled={submitting}>
-              Cancel
-            </button>
-            <button className="button" type="button" onClick={handleEdit} disabled={submitting}>
-              {submitting ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        </UserModal>
+        </Modal>
       ) : null}
 
       {resetPasswordUser ? (
-        <UserModal
+        <Modal
           title="Reset Password"
           subtitle={`Set a new password for ${resetPasswordUser.firstName} ${resetPasswordUser.lastName}`}
           onClose={() => setResetPasswordUser(null)}
+          actions={
+            <>
+              <button className="button ghost button-rect" type="button" onClick={() => setResetPasswordUser(null)} disabled={submitting}>
+                Cancel
+              </button>
+              <button className="button dark button-rect" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || submitting}>
+                {submitting ? "Updating..." : "Update Password"}
+              </button>
+            </>
+          }
         >
           <div className="form-grid">
             <PasswordField
@@ -523,33 +757,27 @@ export function UsersPage() {
               error={resetPasswordErrors.confirmPassword}
             />
           </div>
-          <div className="modal-actions">
-            <button className="button ghost" type="button" onClick={() => setResetPasswordUser(null)} disabled={submitting}>
-              Cancel
-            </button>
-            <button className="button" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || submitting}>
-              {submitting ? "Updating..." : "Update Password"}
-            </button>
-          </div>
-        </UserModal>
+        </Modal>
       ) : null}
 
       {deleteUserTarget ? (
-        <UserModal
+        <Modal
           title="Delete User"
           subtitle={`This will soft-delete ${deleteUserTarget.firstName} ${deleteUserTarget.lastName}.`}
           onClose={() => setDeleteUserTarget(null)}
+          actions={
+            <>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeleteUserTarget(null)} disabled={submitting}>
+                Cancel
+              </button>
+              <button className="button danger button-rect" type="button" onClick={handleDelete} disabled={submitting}>
+                {submitting ? "Deleting..." : "Delete User"}
+              </button>
+            </>
+          }
         >
           <p>This action cannot be undone.</p>
-          <div className="modal-actions">
-            <button className="button ghost" type="button" onClick={() => setDeleteUserTarget(null)} disabled={submitting}>
-              Cancel
-            </button>
-            <button className="button danger" type="button" onClick={handleDelete} disabled={submitting}>
-              {submitting ? "Deleting..." : "Delete User"}
-            </button>
-          </div>
-        </UserModal>
+        </Modal>
       ) : null}
     </div>
   );

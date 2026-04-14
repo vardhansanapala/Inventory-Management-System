@@ -8,21 +8,85 @@ export const MODULE_KEYS = {
   USERS: "users",
 };
 
-const MODULE_ACCESS = {
-  [MODULE_KEYS.DASHBOARD]: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.EMPLOYEE],
-  [MODULE_KEYS.ASSETS]: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
-  [MODULE_KEYS.LOGS]: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.EMPLOYEE],
-  [MODULE_KEYS.SETUP]: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
-  [MODULE_KEYS.USERS]: [ROLES.SUPER_ADMIN],
+export const PERMISSIONS = {
+  // USER
+  CREATE_USER: "CREATE_USER",
+  EDIT_USER: "EDIT_USER",
+  DELETE_USER: "DELETE_USER",
+  RESET_PASSWORD: "RESET_PASSWORD",
+
+  // ASSET
+  CREATE_ASSET: "CREATE_ASSET",
+  UPDATE_ASSET: "UPDATE_ASSET",
+  DELETE_ASSET: "DELETE_ASSET",
+  ASSIGN_ASSET: "ASSIGN_ASSET",
+  VIEW_ASSET: "VIEW_ASSET",
+
+  // PRODUCT
+  CREATE_PRODUCT: "CREATE_PRODUCT",
+  EDIT_PRODUCT: "EDIT_PRODUCT",
+  DELETE_PRODUCT: "DELETE_PRODUCT",
 };
 
+export const ROLE_DEFAULTS = {
+  [ROLES.SUPER_ADMIN]: {
+    manageableRoles: [ROLES.ADMIN, ROLES.EMPLOYEE],
+    permissions: Object.values(PERMISSIONS),
+  },
+  [ROLES.ADMIN]: {
+    manageableRoles: [ROLES.EMPLOYEE],
+    permissions: [
+      PERMISSIONS.VIEW_ASSET,
+      PERMISSIONS.CREATE_ASSET,
+      PERMISSIONS.UPDATE_ASSET,
+      PERMISSIONS.DELETE_ASSET,
+      PERMISSIONS.ASSIGN_ASSET,
+      PERMISSIONS.CREATE_PRODUCT,
+      PERMISSIONS.EDIT_PRODUCT,
+      PERMISSIONS.DELETE_PRODUCT,
+    ],
+  },
+  [ROLES.EMPLOYEE]: {
+    manageableRoles: [],
+    permissions: [PERMISSIONS.VIEW_ASSET],
+  },
+};
+
+function hasAnyPermission(user, needed = []) {
+  const perms = Array.isArray(user?.permissions) ? user.permissions : [];
+  return needed.some((p) => perms.includes(p));
+}
+
 export function canAccessModule(user, moduleKey) {
-  const role = user?.role;
-  return Boolean(role && MODULE_ACCESS[moduleKey]?.includes(role));
+  if (!user) return false;
+
+  // Dashboard/Logs are allowed for any authenticated user (backend module guard also enforces role access).
+  if (moduleKey === MODULE_KEYS.DASHBOARD || moduleKey === MODULE_KEYS.LOGS) {
+    return true;
+  }
+
+  if (moduleKey === MODULE_KEYS.ASSETS) {
+    return hasAnyPermission(user, [PERMISSIONS.VIEW_ASSET, PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.ASSIGN_ASSET]);
+  }
+
+  if (moduleKey === MODULE_KEYS.SETUP) {
+    return hasAnyPermission(user, [PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT]);
+  }
+
+  if (moduleKey === MODULE_KEYS.USERS) {
+    return hasAnyPermission(user, [PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD]);
+  }
+
+  return false;
 }
 
 export function canManageFullSetup(user) {
   return user?.role === ROLES.SUPER_ADMIN;
+}
+
+export function hasPermission(user, permission) {
+  const perms = Array.isArray(user?.permissions) ? user.permissions : [];
+  return perms.includes(permission);
 }
 
 export function getVisibleSidebarLinks(user) {

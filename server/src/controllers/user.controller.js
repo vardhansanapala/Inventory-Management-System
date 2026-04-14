@@ -2,9 +2,33 @@ const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 const { User } = require("../models/User");
 const { USER_AUDIT_ACTIONS } = require("../models/UserAuditLog");
 const { createUserAuditLog } = require("../services/userAudit.service");
+const { PERMISSIONS, getRoleDefaults } = require("../constants/permissions");
 const { ApiError } = require("../utils/ApiError");
 const { hashPassword } = require("../utils/password");
 const { toPublicUser } = require("../utils/userSerializer");
+const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
+
+const VALID_PERMISSIONS = new Set(Object.values(PERMISSIONS));
+
+function normalizeRequestedPermissions(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ApiError(400, "permissions must be an array");
+  }
+
+  const cleaned = value
+    .map((p) => String(p || "").trim())
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(cleaned));
+  const invalid = unique.filter((p) => !VALID_PERMISSIONS.has(p));
+  if (invalid.length) {
+    throw new ApiError(400, `Invalid permissions: ${invalid.join(", ")}`);
+  }
+
+  return unique;
+}
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -69,12 +93,36 @@ async function createUser(req, res) {
     throw new ApiError(400, "Invalid role selected");
   }
 
-  if (actor.role !== USER_ROLES.SUPER_ADMIN && role === USER_ROLES.SUPER_ADMIN) {
-    throw new ApiError(403, "Only super admins can create super admin accounts");
+  if (role === USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "You cannot create a SUPER_ADMIN user");
+  }
+
+  const actorPermissions = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (!actorPermissions.includes(PERMISSIONS.CREATE_USER)) {
+    throw new ApiError(403, "Missing permission: CREATE_USER");
+  }
+
+  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
+  if (!actorManageableRoles.includes(role)) {
+    throw new ApiError(403, "You are not allowed to create users with this role");
   }
 
   requireValidPassword(password);
   await ensureEmailAvailable(email);
+
+  const defaults = getRoleDefaults(role);
+  const requestedPermissions = normalizeRequestedPermissions(req.body.permissions);
+  if (requestedPermissions !== undefined && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "Only super admins can set custom permissions");
+  }
+  const permissions =
+    !requestedPermissions || requestedPermissions.length === 0 ? defaults.permissions : requestedPermissions;
+
+  const requestedManageableRoles = Array.isArray(req.body.manageableRoles) ? req.body.manageableRoles : [];
+  const manageableRoles =
+    role === USER_ROLES.ADMIN && actor.role === USER_ROLES.SUPER_ADMIN
+      ? requestedManageableRoles.filter((r) => r !== USER_ROLES.SUPER_ADMIN)
+      : defaults.manageableRoles;
 
   const user = await User.create({
     firstName,
@@ -82,6 +130,9 @@ async function createUser(req, res) {
     email,
     employeeCode,
     role,
+    permissions,
+    manageableRoles,
+    createdBy: actor._id,
     isActive: nextStatus === USER_STATUSES.ACTIVE,
     status: nextStatus,
     passwordHash: await hashPassword(password),
@@ -91,6 +142,18 @@ async function createUser(req, res) {
     actionType: USER_AUDIT_ACTIONS.USER_CREATED,
     performedBy: actor._id,
     targetUserId: user._id,
+    metadata: {
+      email: user.email,
+      role: user.role,
+      status: user.status,
+    },
+  });
+
+  await RbacAuditLog.create({
+    action: "USER_CREATED",
+    performedBy: actor._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
       email: user.email,
       role: user.role,
@@ -112,9 +175,34 @@ async function updateUser(req, res) {
     throw new ApiError(404, "User not found");
   }
 
-  if (actor.role !== USER_ROLES.SUPER_ADMIN && user.role === USER_ROLES.SUPER_ADMIN) {
-    throw new ApiError(403, "Only super admins can edit super admin accounts");
+  const actorPermissions = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (!actorPermissions.includes(PERMISSIONS.EDIT_USER)) {
+    throw new ApiError(403, "Missing permission: EDIT_USER");
   }
+
+  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
+
+  const isSelf = String(actor._id) === String(user._id);
+  if (isSelf) {
+    if (req.body.role !== undefined) {
+      throw new ApiError(400, "You cannot change your own role");
+    }
+    if (req.body.permissions !== undefined) {
+      throw new ApiError(400, "You cannot modify your own permissions");
+    }
+  }
+
+  if (user.role === USER_ROLES.SUPER_ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "You cannot update a super admin user");
+  }
+
+  if (actor.role !== USER_ROLES.SUPER_ADMIN && !actorManageableRoles.includes(user.role)) {
+    throw new ApiError(403, "You are not allowed to update users with this role");
+  }
+
+  const permissionsBefore = Array.isArray(user.permissions) ? user.permissions.slice() : [];
+  const roleBefore = user.role;
+  const statusBefore = user.status;
 
   if (req.body.firstName !== undefined) {
     const firstName = normalizeText(req.body.firstName);
@@ -143,10 +231,45 @@ async function updateUser(req, res) {
     if (![USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE].includes(req.body.role)) {
       throw new ApiError(400, "Invalid role selected");
     }
-    if (actor.role !== USER_ROLES.SUPER_ADMIN && req.body.role === USER_ROLES.SUPER_ADMIN) {
-      throw new ApiError(403, "Only super admins can assign super admin role");
+
+    if (req.body.role === USER_ROLES.SUPER_ADMIN) {
+      throw new ApiError(403, "You cannot assign the SUPER_ADMIN role");
+    }
+
+    if (!actorManageableRoles.includes(req.body.role)) {
+      throw new ApiError(403, "You are not allowed to assign this role");
     }
     user.role = req.body.role;
+  }
+
+  // If role was changed, ensure the new role is also manageable.
+  if (req.body.role !== undefined && actor.role !== USER_ROLES.SUPER_ADMIN && !actorManageableRoles.includes(user.role)) {
+    throw new ApiError(403, "You are not allowed to assign this role");
+  }
+
+  if (req.body.manageableRoles !== undefined) {
+    if (actor.role !== USER_ROLES.SUPER_ADMIN || user.role !== USER_ROLES.ADMIN) {
+      throw new ApiError(403, "Only super admins can update manageable roles for admins");
+    }
+    if (isSelf) {
+      throw new ApiError(400, "You cannot modify your own manageable roles");
+    }
+    const requested = Array.isArray(req.body.manageableRoles) ? req.body.manageableRoles : [];
+    user.manageableRoles = requested.filter((r) => r !== USER_ROLES.SUPER_ADMIN);
+  }
+
+  if (req.body.permissions !== undefined) {
+    if (actor.role !== USER_ROLES.SUPER_ADMIN) {
+      throw new ApiError(403, "Only super admins can modify user permissions");
+    }
+
+    const requestedPermissions = normalizeRequestedPermissions(req.body.permissions) || [];
+    const defaults = getRoleDefaults(user.role);
+    user.permissions = requestedPermissions.length ? requestedPermissions : defaults.permissions;
+  } else if (req.body.role !== undefined) {
+    // If role changes and permissions weren't explicitly provided, reset to role defaults.
+    const defaults = getRoleDefaults(user.role);
+    user.permissions = defaults.permissions;
   }
 
   if (req.body.status !== undefined) {
@@ -175,6 +298,21 @@ async function updateUser(req, res) {
     },
   });
 
+  await RbacAuditLog.create({
+    action: "USER_UPDATED",
+    performedBy: actor._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+    metadata: {
+      roleBefore,
+      roleAfter: user.role,
+      statusBefore,
+      statusAfter: user.status,
+      permissionsBefore,
+      permissionsAfter: Array.isArray(user.permissions) ? user.permissions : [],
+    },
+  });
+
   res.json(toPublicUser(user));
 }
 
@@ -188,6 +326,26 @@ async function resetUserPassword(req, res) {
     throw new ApiError(404, "User not found");
   }
 
+  const actor = req.user;
+  const actorPermissions = Array.isArray(actor.permissions) ? actor.permissions : [];
+  if (!actorPermissions.includes(PERMISSIONS.RESET_PASSWORD)) {
+    throw new ApiError(403, "Missing permission: RESET_PASSWORD");
+  }
+
+  if (user.role === USER_ROLES.SUPER_ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "You cannot reset a super admin password");
+  }
+
+  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
+  if (!actorManageableRoles.includes(user.role)) {
+    throw new ApiError(403, "You are not allowed to reset passwords for this role");
+  }
+
+  const isOwner = String(user.createdBy || "") === String(actor._id);
+  if (actor.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
+    throw new ApiError(403, "You can only reset passwords for users you created");
+  }
+
   const newPassword = String(req.body.password || req.body.newPassword || "");
   requireValidPassword(newPassword, "New password");
 
@@ -196,10 +354,21 @@ async function resetUserPassword(req, res) {
 
   await createUserAuditLog({
     actionType: USER_AUDIT_ACTIONS.PASSWORD_RESET,
-    performedBy: req.user._id,
+    performedBy: actor._id,
     targetUserId: user._id,
     metadata: {
       email: user.email,
+    },
+  });
+
+  await RbacAuditLog.create({
+    action: "PASSWORD_RESET",
+    performedBy: actor._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+    metadata: {
+      email: user.email,
+      role: user.role,
     },
   });
 
@@ -218,8 +387,22 @@ async function pauseUser(req, res) {
     throw new ApiError(404, "User not found");
   }
 
+  const actor = req.user;
+  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
+  if (user.role === USER_ROLES.SUPER_ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "You cannot pause a super admin user");
+  }
+  if (!actorManageableRoles.includes(user.role)) {
+    throw new ApiError(403, "You are not allowed to pause users with this role");
+  }
+
   if (String(req.user._id) === String(user._id)) {
     throw new ApiError(400, "You cannot pause your own account");
+  }
+
+  const isOwner = String(user.createdBy || "") === String(req.user._id);
+  if (req.user.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
+    throw new ApiError(403, "You can only pause users you created");
   }
 
   user.status = USER_STATUSES.PAUSED;
@@ -232,6 +415,17 @@ async function pauseUser(req, res) {
     targetUserId: user._id,
     metadata: {
       email: user.email,
+    },
+  });
+
+  await RbacAuditLog.create({
+    action: "USER_PAUSED",
+    performedBy: req.user._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+    metadata: {
+      email: user.email,
+      role: user.role,
     },
   });
 
@@ -250,6 +444,20 @@ async function resumeUser(req, res) {
     throw new ApiError(404, "User not found");
   }
 
+  const actor = req.user;
+  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
+  if (user.role === USER_ROLES.SUPER_ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "You cannot resume a super admin user");
+  }
+  if (!actorManageableRoles.includes(user.role)) {
+    throw new ApiError(403, "You are not allowed to resume users with this role");
+  }
+
+  const isOwner = String(user.createdBy || "") === String(req.user._id);
+  if (req.user.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
+    throw new ApiError(403, "You can only resume users you created");
+  }
+
   user.status = USER_STATUSES.ACTIVE;
   user.isActive = true;
   await user.save();
@@ -260,6 +468,17 @@ async function resumeUser(req, res) {
     targetUserId: user._id,
     metadata: {
       email: user.email,
+    },
+  });
+
+  await RbacAuditLog.create({
+    action: "USER_RESUMED",
+    performedBy: req.user._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+    metadata: {
+      email: user.email,
+      role: user.role,
     },
   });
 
@@ -278,6 +497,20 @@ async function deleteUser(req, res) {
     throw new ApiError(404, "User not found");
   }
 
+  const actorPermissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+  if (!actorPermissions.includes(PERMISSIONS.DELETE_USER)) {
+    throw new ApiError(403, "Missing permission: DELETE_USER");
+  }
+
+  if (user.role === USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "Super admin accounts cannot be deleted");
+  }
+
+  const isOwner = String(user.createdBy || "") === String(req.user._id);
+  if (req.user.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
+    throw new ApiError(403, "You can only delete users you created");
+  }
+
   if (String(req.user._id) === String(user._id)) {
     throw new ApiError(400, "You cannot delete your own account");
   }
@@ -291,6 +524,17 @@ async function deleteUser(req, res) {
     actionType: USER_AUDIT_ACTIONS.USER_DELETED,
     performedBy: req.user._id,
     targetUserId: user._id,
+    metadata: {
+      email: user.email,
+      role: user.role,
+    },
+  });
+
+  await RbacAuditLog.create({
+    action: "USER_DELETED",
+    performedBy: req.user._id,
+    targetId: user._id,
+    targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
       email: user.email,
       role: user.role,

@@ -62,8 +62,23 @@ function requireModuleAccess(moduleKey) {
       return next(new ApiError(401, "Authentication required"));
     }
 
-    if (!canAccessModule(req.user.role, moduleKey)) {
+    if (!canAccessModule(req.user, moduleKey)) {
       return next(new ApiError(403, "You do not have access to this module"));
+    }
+
+    return next();
+  };
+}
+
+function hasPermission(permission) {
+  return function permissionGuard(req, _res, next) {
+    if (!req.user) {
+      return next(new ApiError(401, "Authentication required"));
+    }
+
+    const perms = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+    if (!perms.includes(permission)) {
+      return next(new ApiError(403, "Missing required permission"));
     }
 
     return next();
@@ -75,4 +90,5 @@ module.exports = {
   requireAuth,
   requireRole,
   requireModuleAccess,
+  hasPermission,
 };

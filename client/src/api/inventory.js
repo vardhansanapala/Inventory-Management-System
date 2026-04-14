@@ -158,6 +158,19 @@ export function createAsset(payload) {
   });
 }
 
+export function updateAsset(assetId, payload) {
+  return request(`/assets/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteAsset(assetId) {
+  return request(`/assets/${encodeURIComponent(assetId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function getAssetById(assetId) {
   return request(`/assets/${encodeURIComponent(assetId)}`);
 }

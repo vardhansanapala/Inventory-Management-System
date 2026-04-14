@@ -1,5 +1,6 @@
 const { Schema, model } = require("mongoose");
 const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
+const { PERMISSIONS } = require("../constants/permissions");
 
 const UserSchema = new Schema(
   {
@@ -35,6 +36,23 @@ const UserSchema = new Schema(
       type: String,
       enum: Object.values(USER_ROLES),
       default: USER_ROLES.EMPLOYEE,
+    },
+    permissions: {
+      type: [String],
+      enum: Object.values(PERMISSIONS),
+      default: [],
+      index: true,
+    },
+    manageableRoles: {
+      type: [String],
+      enum: Object.values(USER_ROLES),
+      default: [],
+    },
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
     },
     passwordHash: {
       type: String,

@@ -1,5 +1,6 @@
 const env = require("../config/env");
 const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
+const { getRoleDefaults } = require("../constants/permissions");
 const { User } = require("../models/User");
 const { comparePassword, hashPassword } = require("../utils/password");
 
@@ -10,12 +11,15 @@ async function ensureDefaultSuperAdmin() {
 
   if (!user) {
     const passwordHash = await hashPassword(env.defaultSuperAdminPassword);
+    const defaults = getRoleDefaults(USER_ROLES.SUPER_ADMIN);
     user = await User.create({
       firstName: "System",
       lastName: "Super Admin",
       email,
       employeeCode: "SYS-ADMIN",
       role: USER_ROLES.SUPER_ADMIN,
+      permissions: defaults.permissions,
+      manageableRoles: defaults.manageableRoles,
       passwordHash,
       isActive: true,
       status: USER_STATUSES.ACTIVE,
@@ -29,6 +33,17 @@ async function ensureDefaultSuperAdmin() {
 
   if (user.role !== USER_ROLES.SUPER_ADMIN) {
     user.role = USER_ROLES.SUPER_ADMIN;
+    requiresSave = true;
+  }
+
+  const defaults = getRoleDefaults(USER_ROLES.SUPER_ADMIN);
+  if (!Array.isArray(user.permissions) || user.permissions.length === 0) {
+    user.permissions = defaults.permissions;
+    requiresSave = true;
+  }
+
+  if (!Array.isArray(user.manageableRoles) || user.manageableRoles.length === 0) {
+    user.manageableRoles = defaults.manageableRoles;
     requiresSave = true;
   }
 

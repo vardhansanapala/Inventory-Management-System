@@ -3,6 +3,7 @@ const {
   getAssetBootstrap,
   createAsset,
   getAssetById,
+  getAssetDetails,
   getAssetAuditLogs,
   getAssetQrCode,
   listAssets,
@@ -22,6 +23,7 @@ router.get("/qr/:assetId", asyncHandler(getAssetQrCode));
 router.use(requireAuth, requireModuleAccess(MODULE_KEYS.ASSETS));
 router.get("/bootstrap", asyncHandler(getAssetBootstrap));
 router.get("/", asyncHandler(listAssets));
+router.get("/:assetId/details", requireRole(USER_ROLES.SUPER_ADMIN), asyncHandler(getAssetDetails));
 router.get("/:assetId", asyncHandler(getAssetById));
 router.patch("/:assetId", hasPermission(PERMISSIONS.UPDATE_ASSET), asyncHandler(updateAsset));
 router.delete("/:assetId", hasPermission(PERMISSIONS.DELETE_ASSET), asyncHandler(deleteAsset));

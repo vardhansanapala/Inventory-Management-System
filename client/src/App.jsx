@@ -10,6 +10,8 @@ import { SetupPage } from "./pages/SetupPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ScanPage } from "./pages/ScanPage";
 import { UsersPage } from "./pages/UsersPage";
+import { DeviceInfoPage } from "./pages/DeviceInfoPage";
+import { AssignDevicePage } from "./pages/AssignDevicePage";
 import { useAuth } from "./context/AuthContext";
 
 export default function App() {
@@ -43,6 +45,14 @@ export default function App() {
           }
         />
         <Route
+          path="/assign-device"
+          element={
+            <ProtectedRoute moduleKey={MODULE_KEYS.ASSETS}>
+              <AssignDevicePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/logs"
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.LOGS}>
@@ -63,6 +73,14 @@ export default function App() {
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.USERS}>
               <UsersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/device-info"
+          element={
+            <ProtectedRoute moduleKey={MODULE_KEYS.DEVICE_INFO}>
+              <DeviceInfoPage />
             </ProtectedRoute>
           }
         />

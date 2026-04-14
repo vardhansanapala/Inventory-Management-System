@@ -65,7 +65,7 @@ function generateStrongPassword() {
 function PasswordField({ label, value, onChange, visible, onToggle, error, autoComplete = "new-password" }) {
   return (
     <label className="field-stack">
-      <span>{label}</span>
+      {label ? <span>{label}</span> : null}
       <div className="password-field">
         <input
           className="input"
@@ -296,192 +296,246 @@ export function UsersPage() {
         actions={<span className="role-chip">Permission-aware</span>}
       >
         {canCreateUser ? (
-        <form className="form-grid users-form-grid" onSubmit={handleCreate}>
-          <label className="field-stack">
-            <span>First Name</span>
-            <input
-              className="input"
-              value={createForm.firstName}
-              onChange={(event) => setCreateForm({ ...createForm, firstName: event.target.value })}
-              required
-            />
-          </label>
-          <label className="field-stack">
-            <span>Last Name</span>
-            <input
-              className="input"
-              value={createForm.lastName}
-              onChange={(event) => setCreateForm({ ...createForm, lastName: event.target.value })}
-              required
-            />
-          </label>
-          <label className="field-stack">
-            <span>Email</span>
-            <input
-              className="input"
-              type="email"
-              value={createForm.email}
-              onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })}
-              required
-            />
-          </label>
-          <label className="field-stack">
-            <span>Role</span>
-            <select
-              className="input"
-              value={createForm.role}
-              onChange={(event) => {
-                const nextRole = event.target.value;
-                setCreateForm({ ...createForm, role: nextRole });
-                if (nextRole === ROLES.ADMIN) {
-                  setCreateManageableRoles([ROLES.EMPLOYEE]);
-                } else {
-                  setCreateManageableRoles([]);
-                }
-                if (isSuperAdmin) {
-                  setCreatePermissions(ROLE_DEFAULTS[nextRole]?.permissions || []);
-                }
-              }}
-            >
-              {roleOptions.map((role) => (
-                <option key={role} value={role}>
-                  {role}
-                </option>
-              ))}
-            </select>
-          </label>
-          {isSuperAdmin && createForm.role === ROLES.ADMIN ? (
-            <div className="field-stack">
-              <span>Manageable Roles</span>
-              <div className="mini-list">
-                {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
-                  <label key={role} className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={createManageableRoles.includes(role)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setCreateManageableRoles((current) => {
-                          if (checked) return Array.from(new Set([...current, role]));
-                          return current.filter((r) => r !== role);
-                        });
-                      }}
-                      disabled={role === ROLES.SUPER_ADMIN}
-                    />
-                    {role}
-                  </label>
-                ))}
+        <form className="users-create-form" onSubmit={handleCreate}>
+          <div className="users-create-grid">
+            <div className="users-form-card">
+              <div className="users-form-card-header">
+                <strong>Basic Info</strong>
+                <span className="table-subtle">Account identity</span>
               </div>
-              <p className="table-subtle">SUPER_ADMIN is intentionally not assignable.</p>
+              <div className="users-form-card-body users-two-col">
+                <label className="field-stack">
+                  <span>First Name</span>
+                  <input
+                    className="input"
+                    value={createForm.firstName}
+                    onChange={(event) => setCreateForm({ ...createForm, firstName: event.target.value })}
+                    required
+                  />
+                </label>
+                <label className="field-stack">
+                  <span>Last Name</span>
+                  <input
+                    className="input"
+                    value={createForm.lastName}
+                    onChange={(event) => setCreateForm({ ...createForm, lastName: event.target.value })}
+                    required
+                  />
+                </label>
+                <label className="field-stack users-span-full">
+                  <span>Email</span>
+                  <input
+                    className="input"
+                    type="email"
+                    value={createForm.email}
+                    onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })}
+                    required
+                  />
+                </label>
+              </div>
             </div>
-          ) : null}
-          {isSuperAdmin ? (
-            <div className="field-stack users-permissions">
-              <span>Permissions</span>
-              <div className="permission-groups">
-                <div className="permission-group">
-                  <strong className="table-subtle">USER MANAGEMENT</strong>
-                  {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
-                    <label key={perm} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={createPermissions.includes(perm)}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setCreatePermissions((current) => {
-                            if (checked) return Array.from(new Set([...current, perm]));
-                            return current.filter((p) => p !== perm);
-                          });
-                        }}
-                      />
-                      {perm}
-                    </label>
-                  ))}
+
+            <div className="users-form-card">
+              <div className="users-form-card-header">
+                <strong>Role & Status</strong>
+                <span className="table-subtle">Controls access scope</span>
+              </div>
+              <div className="users-form-card-body users-two-col">
+                <label className="field-stack">
+                  <span>Role</span>
+                  <select
+                    className="input"
+                    value={createForm.role}
+                    onChange={(event) => {
+                      const nextRole = event.target.value;
+                      setCreateForm({ ...createForm, role: nextRole });
+                      if (nextRole === ROLES.ADMIN) {
+                        setCreateManageableRoles([ROLES.EMPLOYEE]);
+                      } else {
+                        setCreateManageableRoles([]);
+                      }
+                      if (isSuperAdmin) {
+                        setCreatePermissions(ROLE_DEFAULTS[nextRole]?.permissions || []);
+                      }
+                    }}
+                  >
+                    {roleOptions.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field-stack">
+                  <span>Status</span>
+                  <select
+                    className="input"
+                    value={createForm.status}
+                    onChange={(event) => setCreateForm({ ...createForm, status: event.target.value })}
+                  >
+                    <option value={USER_STATUSES.ACTIVE}>ACTIVE</option>
+                    <option value={USER_STATUSES.PAUSED}>PAUSED</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            {isSuperAdmin && createForm.role === ROLES.ADMIN ? (
+              <div className="users-form-card">
+                <div className="users-form-card-header">
+                  <strong>Manageable Roles</strong>
+                  <span className="table-subtle">What this admin can create/manage</span>
                 </div>
-                <div className="permission-group">
-                  <strong className="table-subtle">ASSET MANAGEMENT</strong>
-                  {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
-                    <label key={perm} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={createPermissions.includes(perm)}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setCreatePermissions((current) => {
-                            if (checked) return Array.from(new Set([...current, perm]));
-                            return current.filter((p) => p !== perm);
-                          });
-                        }}
-                      />
-                      {perm}
-                    </label>
-                  ))}
-                </div>
-                <div className="permission-group">
-                  <strong className="table-subtle">PRODUCT / SKU</strong>
-                  {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
-                    <label key={perm} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={createPermissions.includes(perm)}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setCreatePermissions((current) => {
-                            if (checked) return Array.from(new Set([...current, perm]));
-                            return current.filter((p) => p !== perm);
-                          });
-                        }}
-                      />
-                      {perm}
-                    </label>
-                  ))}
+                <div className="users-form-card-body">
+                  <div className="users-pill-row" role="group" aria-label="Manageable roles">
+                    {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => {
+                      const isOn = createManageableRoles.includes(role);
+                      return (
+                        <button
+                          key={role}
+                          className={isOn ? "users-pill is-on" : "users-pill"}
+                          type="button"
+                          onClick={() => {
+                            setCreateManageableRoles((current) => {
+                              if (current.includes(role)) return current.filter((r) => r !== role);
+                              return Array.from(new Set([...current, role]));
+                            });
+                          }}
+                          disabled={role === ROLES.SUPER_ADMIN}
+                        >
+                          <span className="users-pill-label">{role}</span>
+                          <span className="users-pill-mark">{isOn ? "✓" : "+"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="table-subtle">SUPER_ADMIN is intentionally not assignable.</p>
                 </div>
               </div>
-              <div className="inline-form">
-                <button
-                  className="button ghost"
-                  type="button"
-                  onClick={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
-                >
-                  Reset to role defaults
+            ) : null}
+
+            {isSuperAdmin ? (
+              <div className="users-form-card users-span-full">
+                <div className="users-form-card-header">
+                  <strong>Permissions</strong>
+                  <span className="table-subtle">Fine-grained access overrides</span>
+                </div>
+                <div className="users-form-card-body">
+                  <div className="users-permission-grid">
+                    <div className="users-permission-box">
+                      <div className="users-permission-box-title">USER MANAGEMENT</div>
+                      <div className="users-permission-checks">
+                        {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
+                          <label key={perm} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={createPermissions.includes(perm)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setCreatePermissions((current) => {
+                                  if (checked) return Array.from(new Set([...current, perm]));
+                                  return current.filter((p) => p !== perm);
+                                });
+                              }}
+                            />
+                            {perm}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="users-permission-box">
+                      <div className="users-permission-box-title">ASSET MANAGEMENT</div>
+                      <div className="users-permission-checks">
+                        {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
+                          <label key={perm} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={createPermissions.includes(perm)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setCreatePermissions((current) => {
+                                  if (checked) return Array.from(new Set([...current, perm]));
+                                  return current.filter((p) => p !== perm);
+                                });
+                              }}
+                            />
+                            {perm}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="users-permission-box">
+                      <div className="users-permission-box-title">PRODUCT / SKU</div>
+                      <div className="users-permission-checks">
+                        {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
+                          <label key={perm} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={createPermissions.includes(perm)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setCreatePermissions((current) => {
+                                  if (checked) return Array.from(new Set([...current, perm]));
+                                  return current.filter((p) => p !== perm);
+                                });
+                              }}
+                            />
+                            {perm}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="inline-form">
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
+                    >
+                      Reset to role defaults
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="users-form-card">
+              <div className="users-form-card-header">
+                <strong>Password</strong>
+                <span className="table-subtle">Set initial credentials</span>
+              </div>
+              <div className="users-form-card-body users-password-stack">
+                <button className="button ghost users-generate-btn" type="button" onClick={applyGeneratedPassword}>
+                  Generate Password
                 </button>
+                <PasswordField
+                  label="Password"
+                  value={createForm.password}
+                  onChange={(value) => setCreateForm({ ...createForm, password: value })}
+                  visible={showCreatePassword}
+                  onToggle={() => setShowCreatePassword((current) => !current)}
+                  error={createPasswordErrors.password}
+                />
+                <PasswordField
+                  label="Confirm Password"
+                  value={createForm.confirmPassword}
+                  onChange={(value) => setCreateForm({ ...createForm, confirmPassword: value })}
+                  visible={showCreateConfirm}
+                  onToggle={() => setShowCreateConfirm((current) => !current)}
+                  error={createPasswordErrors.confirmPassword}
+                />
               </div>
             </div>
-          ) : null}
-          <label className="field-stack">
-            <span>Status</span>
-            <select className="input" value={createForm.status} onChange={(event) => setCreateForm({ ...createForm, status: event.target.value })}>
-              <option value={USER_STATUSES.ACTIVE}>ACTIVE</option>
-              <option value={USER_STATUSES.PAUSED}>PAUSED</option>
-            </select>
-          </label>
-          <div className="field-stack">
-            <span>Password</span>
-            <div className="inline-form">
-              <button className="button ghost" type="button" onClick={applyGeneratedPassword}>
-                Generate Password
-              </button>
-            </div>
-            <PasswordField
-              label=""
-              value={createForm.password}
-              onChange={(value) => setCreateForm({ ...createForm, password: value })}
-              visible={showCreatePassword}
-              onToggle={() => setShowCreatePassword((current) => !current)}
-              error={createPasswordErrors.password}
-            />
           </div>
-          <PasswordField
-            label="Confirm Password"
-            value={createForm.confirmPassword}
-            onChange={(value) => setCreateForm({ ...createForm, confirmPassword: value })}
-            visible={showCreateConfirm}
-            onToggle={() => setShowCreateConfirm((current) => !current)}
-            error={createPasswordErrors.confirmPassword}
-          />
-          <button className="button" type="submit" disabled={!createFormValid || submitting}>
-            {submitting ? "Creating..." : "Create User"}
-          </button>
+
+          <div className="users-create-actions">
+            <button className="button users-create-submit" type="submit" disabled={!createFormValid || submitting}>
+              {submitting ? "Creating..." : "Create User"}
+            </button>
+          </div>
         </form>
         ) : (
           <div className="page-message">You do not have permission to create users.</div>

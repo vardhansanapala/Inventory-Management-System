@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   createAsset,
@@ -167,6 +167,7 @@ const emptySetupData = {
 
 export function AssetsPage() {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [setupData, setSetupData] = useState(emptySetupData);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -176,6 +177,7 @@ export function AssetsPage() {
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") || "");
   const [quickAccessId, setQuickAccessId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -280,6 +282,14 @@ export function AssetsPage() {
         }
       })
       .catch((err) => setError(err.message));
+  }
+
+  function buildAssetListFilters(nextSearch) {
+    const normalizedSearch = String(nextSearch ?? search).trim();
+    const filters = {};
+    if (normalizedSearch) filters.search = normalizedSearch;
+    if (statusFilter) filters.status = statusFilter;
+    return filters;
   }
 
   async function loadSetupData() {
@@ -420,7 +430,7 @@ export function AssetsPage() {
     const registrySearch = assets.some((item) => item._id === asset._id) ? search : resolvedAssetId;
     setAssignLookupInput(resolvedAssetId);
     setSearch(registrySearch);
-    await loadAssets(registrySearch ? { search: registrySearch } : {});
+    await loadAssets(buildAssetListFilters(registrySearch));
     await applySelectedAsset(asset, `${resolvedAssetId} is now selected from ${sourceLabel}.`);
     return asset;
   }
@@ -593,12 +603,35 @@ export function AssetsPage() {
 
   useEffect(() => {
     loadSetupData();
-    loadAssets();
+    loadAssets(buildAssetListFilters(""));
   }, []);
 
   useEffect(() => {
     const nextTab = normalizeTab(searchParams.get("tab"));
     setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab));
+  }, [searchParams]);
+
+  useEffect(() => {
+    const nextStatus = searchParams.get("status") || "";
+    setStatusFilter((current) => (current === nextStatus ? current : nextStatus));
+  }, [searchParams]);
+
+  useEffect(() => {
+    loadAssets(buildAssetListFilters());
+  }, [statusFilter]);
+
+  useEffect(() => {
+    const assetId = searchParams.get("assetId");
+    if (!assetId) return;
+
+    updateActiveTab("assign");
+    handleSelectAsset(assetId);
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("assetId");
+      return next;
+    }, { replace: true });
   }, [searchParams]);
 
   useEffect(() => {
@@ -683,7 +716,7 @@ export function AssetsPage() {
         status: editForm.status,
       });
       setEditingAsset(null);
-      await loadAssets(search ? { search } : {});
+      await loadAssets(buildAssetListFilters());
       if (selectedAssetId === editingAsset._id) {
         await handleSelectAsset(editingAsset._id);
       }
@@ -703,7 +736,7 @@ export function AssetsPage() {
       await deleteAsset(deleteAssetTarget._id);
       const deletedId = deleteAssetTarget._id;
       setDeleteAssetTarget(null);
-      await loadAssets(search ? { search } : {});
+      await loadAssets(buildAssetListFilters());
       if (selectedAssetId === deletedId) {
         setSelectedAssetId("");
         setSelectedAsset(null);
@@ -749,7 +782,7 @@ export function AssetsPage() {
       setLatestCreatedAsset(createdAsset);
       setMessage(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`);
       setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
-      await loadAssets(search ? { search } : {});
+      await loadAssets(buildAssetListFilters());
       await handleSelectAsset(createdAsset._id);
     } catch (err) {
       setError(err.message);
@@ -820,7 +853,7 @@ export function AssetsPage() {
 
       setSelectedAsset(result.asset);
       setMessage(`Action ${actionForm.action} completed for ${getAssetId(result.asset)}.`);
-      await loadAssets(search ? { search } : {});
+      await loadAssets(buildAssetListFilters());
       const logs = await getAssetAuditLogs(selectedAssetId);
       setAssetLogs(logs);
     } catch (err) {
@@ -862,7 +895,7 @@ export function AssetsPage() {
                 <input className="input" placeholder="Quick Access: asset ID or /scan/:assetId URL" value={quickAccessId} onChange={(event) => setQuickAccessId(event.target.value)} />
                 <button className="button dark" type="submit">Open</button>
               </form>
-              <form className="inline-form" onSubmit={(event) => { event.preventDefault(); loadAssets(search ? { search } : {}); }}>
+              <form className="inline-form" onSubmit={(event) => { event.preventDefault(); loadAssets(buildAssetListFilters()); }}>
                 <input className="input" placeholder="Search by asset code, SKU, or serial" value={search} onChange={(event) => setSearch(event.target.value)} />
                 <button className="button dark" type="submit">Search</button>
               </form>
@@ -923,10 +956,10 @@ export function AssetsPage() {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          handleSelectAsset(asset._id);
+                          navigate(`/assign-device?assetId=${encodeURIComponent(asset._id)}`);
                         }}
                       >
-                        {selectedAssetId === asset._id ? "Selected" : "Select"}
+                        Select
                       </button>
                     </td>
                   </tr>

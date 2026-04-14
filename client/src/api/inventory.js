@@ -151,6 +151,20 @@ export function listAssets(searchParams = {}) {
   return request(`/assets${query ? `?${query}` : ""}`);
 }
 
+// SUPER_ADMIN-only (Device Info module): paginated assets
+export function getAssets({ page = 1, limit = 10, search = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("limit", String(limit));
+  if (search) params.set("search", search);
+  return request(`/assets?${params.toString()}`);
+}
+
+// SUPER_ADMIN-only (Device Info module): details + history
+export function getAssetDetails(assetId) {
+  return request(`/assets/${encodeURIComponent(assetId)}/details`);
+}
+
 export function createAsset(payload) {
   return request("/assets", {
     method: "POST",

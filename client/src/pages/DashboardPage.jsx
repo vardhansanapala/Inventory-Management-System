@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getDashboardSummary } from "../api/inventory";
 import { SectionCard } from "../components/SectionCard";
 import { StatCard } from "../components/StatCard";
 import { StatusPill } from "../components/StatusPill";
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState("");
 
@@ -34,16 +36,21 @@ export function DashboardPage() {
       </section>
 
       <div className="stats-grid">
-        <StatCard label="Total Assets : " value={summary.totalAssets} />
-        <StatCard label="In Repairs : " value={summary.openRepairs} accent="forest" />
-        <StatCard label="Available : " value={summary.statusBreakdown.AVAILABLE || 0} accent="sun" />
-        <StatCard label="Assigned : " value={summary.statusBreakdown.ASSIGNED || 0} accent="ink" />
+        <StatCard label="Total Assets : " value={summary.totalAssets} onClick={() => navigate("/assets")} />
+        <StatCard label="In Repairs : " value={summary.openRepairs} accent="forest" onClick={() => navigate("/assets?status=UNDER_REPAIR")} />
+        <StatCard label="Available : " value={summary.statusBreakdown.AVAILABLE || 0} accent="sun" onClick={() => navigate("/assets?status=AVAILABLE")} />
+        <StatCard label="Assigned : " value={summary.statusBreakdown.ASSIGNED || 0} accent="ink" onClick={() => navigate("/assets?status=ASSIGNED")} />
       </div>
 
       <SectionCard title="Status Breakdown" subtitle="Current status counts across all assets">
         <div className="status-grid">
           {Object.entries(summary.statusBreakdown).map(([status, count]) => (
-            <div key={status} className="status-row">
+            <div key={status} className="status-row status-row-clickable" role="button" tabIndex={0} onClick={() => navigate(`/assets?status=${encodeURIComponent(status)}`)} onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate(`/assets?status=${encodeURIComponent(status)}`);
+              }
+            }}>
               <StatusPill status={status} />
               <strong>{count}</strong>
             </div>

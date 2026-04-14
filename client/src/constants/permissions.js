@@ -6,6 +6,7 @@ export const MODULE_KEYS = {
   LOGS: "logs",
   SETUP: "setup",
   USERS: "users",
+  DEVICE_INFO: "deviceInfo",
 };
 
 export const PERMISSIONS = {
@@ -77,6 +78,10 @@ export function canAccessModule(user, moduleKey) {
     return hasAnyPermission(user, [PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD]);
   }
 
+  if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
+    return user?.role === ROLES.SUPER_ADMIN;
+  }
+
   return false;
 }
 
@@ -93,6 +98,7 @@ export function getVisibleSidebarLinks(user) {
   const links = [
     { to: "/", label: "Dashboard", moduleKey: MODULE_KEYS.DASHBOARD },
     { to: "/assets", label: "Assets", moduleKey: MODULE_KEYS.ASSETS },
+    { to: "/device-info", label: "Device Info", moduleKey: MODULE_KEYS.DEVICE_INFO },
     { to: "/logs", label: "Logs", moduleKey: MODULE_KEYS.LOGS },
     { to: "/setup", label: "Setup", moduleKey: MODULE_KEYS.SETUP },
     { to: "/users", label: "Users", moduleKey: MODULE_KEYS.USERS },

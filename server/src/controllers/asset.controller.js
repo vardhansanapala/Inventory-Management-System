@@ -55,6 +55,11 @@ function serializeAsset(asset) {
 }
 
 async function listAssets(req, res) {
+  const hasPaginationParams = req.query.page !== undefined || req.query.limit !== undefined;
+  if (hasPaginationParams && req.user?.role !== "SUPER_ADMIN") {
+    throw new ApiError(403, "Only super admins can access paginated device info");
+  }
+
   const filter = {
     isDeleted: false,
   };
@@ -70,17 +75,43 @@ async function listAssets(req, res) {
   if (req.query.search) {
     const regex = new RegExp(req.query.search.trim(), "i");
     const matchingProducts = await Product.find({
-      sku: regex,
       isDeleted: false,
+      $or: [{ brand: regex }, { model: regex }],
     }).select("_id");
 
     filter.$or = [
       { assetId: regex },
-      { serialNumber: regex },
       ...(matchingProducts.length
         ? [{ product: { $in: matchingProducts.map((product) => product._id) } }]
         : []),
     ];
+  }
+
+  if (hasPaginationParams) {
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [assets, total] = await Promise.all([
+      Asset.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("product")
+        .populate("location")
+        .populate("assignedTo", "firstName lastName email"),
+      Asset.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+    res.json({
+      data: assets.map(serializeAsset),
+      total,
+      page,
+      totalPages,
+    });
+    return;
   }
 
   const assets = await Asset.find(filter)
@@ -90,6 +121,83 @@ async function listAssets(req, res) {
     .populate("assignedTo", "firstName lastName email");
 
   res.json(assets.map(serializeAsset));
+}
+
+async function getAssetDetails(req, res) {
+  if (req.user?.role !== "SUPER_ADMIN") {
+    throw new ApiError(403, "Only super admins can access device info details");
+  }
+
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
+    .populate("product")
+    .populate("location")
+    .populate("assignedTo", "firstName lastName email");
+
+  if (!asset) {
+    throw new ApiError(404, "Asset not found");
+  }
+
+  const logs = await AuditLog.find({
+    asset: asset._id,
+    isDeleted: false,
+  })
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(250)
+    .populate("performedBy", "firstName lastName email")
+    .populate("fromLocation toLocation", "name code")
+    .populate("fromAssignee toAssignee", "firstName lastName email");
+
+  const history = logs.map((log) => {
+    const action = String(log.action || "");
+    const lower = action.toLowerCase();
+
+    const isRepair = lower.includes("repair");
+    const isOutside = lower.includes("outside") || action === "SEND_OUTSIDE" || action === "RETURN_DEVICE";
+    const isAssign = lower.includes("assign");
+
+    const type = isRepair ? "REPAIR" : isOutside ? "OUTSIDE" : isAssign ? "ASSIGNED" : "EVENT";
+
+    return {
+      type,
+      action,
+      user: log.performedBy
+        ? {
+            _id: log.performedBy._id,
+            firstName: log.performedBy.firstName,
+            lastName: log.performedBy.lastName,
+            email: log.performedBy.email,
+          }
+        : null,
+      from: log.fromStatus ? { status: log.fromStatus } : null,
+      to: log.toStatus ? { status: log.toStatus } : null,
+      reason: log.reason || null,
+      description: log.notes || log.customReason || "",
+      timestamp: log.createdAt || log.timestamp,
+      fromLocation: log.fromLocation ? { _id: log.fromLocation._id, name: log.fromLocation.name } : null,
+      toLocation: log.toLocation ? { _id: log.toLocation._id, name: log.toLocation.name } : null,
+      fromAssignee: log.fromAssignee
+        ? { _id: log.fromAssignee._id, firstName: log.fromAssignee.firstName, lastName: log.fromAssignee.lastName, email: log.fromAssignee.email }
+        : null,
+      toAssignee: log.toAssignee
+        ? { _id: log.toAssignee._id, firstName: log.toAssignee.firstName, lastName: log.toAssignee.lastName, email: log.toAssignee.email }
+        : null,
+    };
+  });
+
+  res.json({
+    asset: {
+      _id: asset._id,
+      assetId: asset.assetId,
+      sku: asset.product?.sku || null,
+      serialNumber: asset.serialNumber || null,
+      status: asset.status,
+      location: asset.location ? { _id: asset.location._id, name: asset.location.name } : null,
+      assignedTo: asset.assignedTo
+        ? { _id: asset.assignedTo._id, firstName: asset.assignedTo.firstName, lastName: asset.assignedTo.lastName, email: asset.assignedTo.email }
+        : null,
+    },
+    history,
+  });
 }
 
 function buildAssetLookupQuery(identifier) {
@@ -436,6 +544,7 @@ module.exports = {
   getAssetBootstrap,
   listAssets,
   getAssetById,
+  getAssetDetails,
   getDeviceByIdPublic,
   getAssetQrCode,
   regenerateAssetQrCode,

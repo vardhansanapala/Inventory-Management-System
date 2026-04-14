@@ -8,6 +8,7 @@ import {
   resumeUser,
   updateUser,
 } from "../api/inventory";
+import { ActionMenu } from "../components/ActionMenu";
 import { SectionCard } from "../components/SectionCard";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
@@ -106,7 +107,7 @@ export function UsersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [openActionsFor, setOpenActionsFor] = useState(null);
+  const isSuperAdmin = currentUser?.role === ROLES.SUPER_ADMIN;
 
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
@@ -167,7 +168,6 @@ export function UsersPage() {
       setError(err.message);
     } finally {
       setSubmitting(false);
-      setOpenActionsFor(null);
     }
   }
 
@@ -253,7 +253,6 @@ export function UsersPage() {
       role: targetUser.role || ROLES.EMPLOYEE,
       status: targetUser.status || USER_STATUSES.ACTIVE,
     });
-    setOpenActionsFor(null);
   }
 
   function openResetModal(targetUser) {
@@ -261,7 +260,6 @@ export function UsersPage() {
     setPasswordForm(emptyPasswordForm);
     setShowResetPassword(false);
     setShowResetConfirm(false);
-    setOpenActionsFor(null);
   }
 
   function applyGeneratedPassword() {
@@ -291,6 +289,7 @@ export function UsersPage() {
         subtitle="Create accounts, manage roles, and control account status with super-admin-only actions."
         actions={<span className="role-chip">Super admin only</span>}
       >
+        {isSuperAdmin ? (
         <form className="form-grid users-form-grid" onSubmit={handleCreate}>
           <label className="field-stack">
             <span>First Name</span>
@@ -365,6 +364,9 @@ export function UsersPage() {
             {submitting ? "Creating..." : "Create User"}
           </button>
         </form>
+        ) : (
+          <div className="page-message">Only SUPER_ADMIN can create or manage users.</div>
+        )}
       </SectionCard>
 
       <SectionCard title="Users" subtitle="Only active and paused accounts are shown here. Deleted users are soft removed.">
@@ -376,7 +378,7 @@ export function UsersPage() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>Actions</th>
+                {isSuperAdmin ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -400,57 +402,48 @@ export function UsersPage() {
                           {targetUser.status || USER_STATUSES.ACTIVE}
                         </span>
                       </td>
-                      <td>
-                        <div className="actions-dropdown">
-                          <button
-                            className="icon-action-button"
-                            type="button"
-                            title="User actions"
-                            aria-label={`Open actions for ${targetUser.firstName} ${targetUser.lastName}`}
-                            onClick={() => setOpenActionsFor(openActionsFor === targetUser._id ? null : targetUser._id)}
-                          >
-                            ⋮
-                          </button>
-                          {openActionsFor === targetUser._id ? (
-                            <div className="actions-menu" role="menu">
-                              <button type="button" className="actions-menu-item" title="Edit user" onClick={() => openEditModal(targetUser)}>
-                                <span aria-hidden>✎</span>
-                                <span>Edit User</span>
-                              </button>
-                              <button type="button" className="actions-menu-item" title="Reset password" onClick={() => openResetModal(targetUser)}>
-                                <span aria-hidden>⌁</span>
-                                <span>Reset Password</span>
-                              </button>
-                              {canPauseResume ? (
-                                <button type="button" className="actions-menu-item" title="Pause or resume user" onClick={() => handlePauseResume(targetUser)}>
-                                  <span aria-hidden>{targetUser.status === USER_STATUSES.PAUSED ? "▶" : "⏸"}</span>
-                                  <span>{targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account"}</span>
-                                </button>
-                              ) : null}
-                              {canDelete ? (
-                                <button
-                                  type="button"
-                                  className="actions-menu-item danger"
-                                  title="Delete user"
-                                  onClick={() => {
-                                    setDeleteUserTarget(targetUser);
-                                    setOpenActionsFor(null);
-                                  }}
-                                >
-                                  <span aria-hidden>⌦</span>
-                                  <span>Delete User</span>
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                      </td>
+                      {isSuperAdmin ? (
+                        <td>
+                          <ActionMenu
+                            label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
+                            items={[
+                              {
+                                id: "edit",
+                                label: "Edit User",
+                                icon: "✏️",
+                                onClick: () => openEditModal(targetUser),
+                              },
+                              {
+                                id: "reset",
+                                label: "Reset Password",
+                                icon: "🔑",
+                                onClick: () => openResetModal(targetUser),
+                              },
+                              {
+                                id: "pauseResume",
+                                label: targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account",
+                                icon: targetUser.status === USER_STATUSES.PAUSED ? "▶" : "⏸",
+                                hidden: !canPauseResume,
+                                onClick: () => handlePauseResume(targetUser),
+                              },
+                              {
+                                id: "delete",
+                                label: "Delete User",
+                                icon: "🗑️",
+                                hidden: !canDelete,
+                                danger: true,
+                                onClick: () => setDeleteUserTarget(targetUser),
+                              },
+                            ]}
+                          />
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={5}>No users found.</td>
+                  <td colSpan={isSuperAdmin ? 5 : 4}>No users found.</td>
                 </tr>
               )}
             </tbody>

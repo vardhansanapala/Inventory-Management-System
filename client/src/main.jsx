@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { ActionFeedbackProvider } from "./context/ActionFeedbackContext";
 import { AuthProvider } from "./context/AuthContext";
 import App from "./App";
 import "./styles.css";
@@ -8,10 +9,11 @@ import "./styles.css";
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <ActionFeedbackProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </ActionFeedbackProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
-

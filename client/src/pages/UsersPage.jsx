@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createUser,
   deleteUser,
@@ -8,12 +8,14 @@ import {
   resumeUser,
   updateUser,
 } from "../api/inventory";
+import { ActionFeedback } from "../components/ActionFeedback";
 import { ActionMenu } from "../components/ActionMenu";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from "../constants/permissions";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
+import { useActionFeedback } from "../hooks/useActionFeedback";
 
 const USER_STATUSES = {
   ACTIVE: "ACTIVE",
@@ -87,9 +89,11 @@ export function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+  const [activeRowFeedbackId, setActiveRowFeedbackId] = useState("");
+  const [highlightedUserId, setHighlightedUserId] = useState("");
+  const rowFlashTimeoutRef = useRef(null);
   const isSuperAdmin = currentUser?.role === ROLES.SUPER_ADMIN;
   const canCreateUser = hasPermission(currentUser, PERMISSIONS.CREATE_USER);
   const canEditUser = hasPermission(currentUser, PERMISSIONS.EDIT_USER);
@@ -114,6 +118,11 @@ export function UsersPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [deleteUserTarget, setDeleteUserTarget] = useState(null);
+  const createFeedback = useActionFeedback({ preferGlobal: true });
+  const rowFeedback = useActionFeedback();
+  const editFeedback = useActionFeedback();
+  const resetFeedback = useActionFeedback();
+  const deleteFeedback = useActionFeedback();
 
   const createPasswordErrors = getPasswordErrors(createForm.password, createForm.confirmPassword);
   const resetPasswordErrors = getPasswordErrors(passwordForm.password, passwordForm.confirmPassword);
@@ -134,11 +143,11 @@ export function UsersPage() {
 
   async function fetchUsers() {
     try {
-      setError("");
+      setLoadError("");
       const data = await listUsers();
       setUsers(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(err.message);
+      setLoadError(err.message);
     } finally {
       setLoading(false);
     }
@@ -154,19 +163,59 @@ export function UsersPage() {
     setCreatePermissions((current) => (current.length ? current : defaults));
   }, [createForm.role, isSuperAdmin]);
 
-  async function withRefresh(run, successMessage) {
-    try {
-      setSubmitting(true);
-      setMessage("");
-      setError("");
-      await run();
-      await fetchUsers();
-      setMessage(successMessage);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
+  useEffect(() => () => {
+    window.clearTimeout(rowFlashTimeoutRef.current);
+  }, []);
+
+  function flashUserRow(userId) {
+    if (!userId) return;
+    setHighlightedUserId(userId);
+    window.clearTimeout(rowFlashTimeoutRef.current);
+    rowFlashTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedUserId("");
+    }, 1800);
+  }
+
+  async function runUserAction({
+    key,
+    action,
+    feedbackController,
+    successMsg,
+    errorMsg,
+    loadingMsg,
+    rowUserId = "",
+    afterSuccess,
+  }) {
+    setBusyKey(key);
+    if (rowUserId) {
+      setActiveRowFeedbackId(rowUserId);
     }
+
+    const result = await feedbackController.handleAsyncAction(
+      async () => {
+        const value = await action();
+        await fetchUsers();
+        return value;
+      },
+      {
+        loadingMsg,
+        successMsg,
+        errorMsg,
+        globalSuccess: !rowUserId,
+        globalError: !rowUserId,
+      }
+    );
+
+    if (result && rowUserId) {
+      flashUserRow(rowUserId);
+    }
+
+    if (result) {
+      afterSuccess?.(result);
+    }
+
+    setBusyKey("");
+    return result;
   }
 
   async function handleCreate(event) {
@@ -175,23 +224,31 @@ export function UsersPage() {
       return;
     }
 
-    await withRefresh(async () => {
-      await createUser({
-        firstName: createForm.firstName.trim(),
-        lastName: createForm.lastName.trim(),
-        email: createForm.email.trim(),
-        role: createForm.role,
-        status: createForm.status,
-        password: createForm.password,
-        permissions: isSuperAdmin ? createPermissions : undefined,
-        manageableRoles: createForm.role === ROLES.ADMIN && isSuperAdmin ? createManageableRoles : undefined,
-      });
-      setCreateForm(emptyCreateForm);
-      setShowCreatePassword(false);
-      setShowCreateConfirm(false);
-      setCreateManageableRoles([]);
-      setCreatePermissions([]);
-    }, "User created successfully.");
+    await runUserAction({
+      key: "create-user",
+      feedbackController: createFeedback,
+      loadingMsg: "Creating user...",
+      successMsg: "User created successfully.",
+      errorMsg: "Unable to create user.",
+      action: () =>
+        createUser({
+          firstName: createForm.firstName.trim(),
+          lastName: createForm.lastName.trim(),
+          email: createForm.email.trim(),
+          role: createForm.role,
+          status: createForm.status,
+          password: createForm.password,
+          permissions: isSuperAdmin ? createPermissions : undefined,
+          manageableRoles: createForm.role === ROLES.ADMIN && isSuperAdmin ? createManageableRoles : undefined,
+        }),
+      afterSuccess: () => {
+        setCreateForm(emptyCreateForm);
+        setShowCreatePassword(false);
+        setShowCreateConfirm(false);
+        setCreateManageableRoles([]);
+        setCreatePermissions([]);
+      },
+    });
   }
 
   async function handleEdit() {
@@ -199,17 +256,26 @@ export function UsersPage() {
       return;
     }
 
-    await withRefresh(async () => {
-      await updateUser(editingUser._id, {
-        firstName: editForm.firstName.trim(),
-        lastName: editForm.lastName.trim(),
-        role: editForm.role,
-        status: editForm.status,
-        permissions: isSuperAdmin ? editPermissions : undefined,
-        manageableRoles: isSuperAdmin && editForm.role === ROLES.ADMIN ? editManageableRoles : undefined,
-      });
-      setEditingUser(null);
-    }, "User updated successfully.");
+    await runUserAction({
+      key: `edit-user:${editingUser._id}`,
+      feedbackController: editFeedback,
+      loadingMsg: "Saving user changes...",
+      successMsg: "User updated successfully.",
+      errorMsg: "Unable to update user.",
+      action: () =>
+        updateUser(editingUser._id, {
+          firstName: editForm.firstName.trim(),
+          lastName: editForm.lastName.trim(),
+          role: editForm.role,
+          status: editForm.status,
+          permissions: isSuperAdmin ? editPermissions : undefined,
+          manageableRoles: isSuperAdmin && editForm.role === ROLES.ADMIN ? editManageableRoles : undefined,
+        }),
+      afterSuccess: () => {
+        setEditingUser(null);
+        editFeedback.clear();
+      },
+    });
   }
 
   async function handlePasswordReset() {
@@ -217,25 +283,41 @@ export function UsersPage() {
       return;
     }
 
-    await withRefresh(async () => {
-      await resetUserPassword(resetPasswordUser._id, {
-        password: passwordForm.password,
-      });
-      setResetPasswordUser(null);
-      setPasswordForm(emptyPasswordForm);
-      setShowResetPassword(false);
-      setShowResetConfirm(false);
-    }, "Password reset successfully.");
+    await runUserAction({
+      key: `reset-user:${resetPasswordUser._id}`,
+      feedbackController: resetFeedback,
+      loadingMsg: "Updating password...",
+      successMsg: "Password reset successfully.",
+      errorMsg: "Unable to reset password.",
+      action: () =>
+        resetUserPassword(resetPasswordUser._id, {
+          password: passwordForm.password,
+        }),
+      afterSuccess: () => {
+        setResetPasswordUser(null);
+        setPasswordForm(emptyPasswordForm);
+        setShowResetPassword(false);
+        setShowResetConfirm(false);
+        resetFeedback.clear();
+      },
+    });
   }
 
   async function handlePauseResume(targetUser) {
-    await withRefresh(async () => {
-      if (targetUser.status === USER_STATUSES.PAUSED) {
-        await resumeUser(targetUser._id);
-      } else {
-        await pauseUser(targetUser._id);
-      }
-    }, targetUser.status === USER_STATUSES.PAUSED ? "Account resumed successfully." : "Account paused successfully.");
+    await runUserAction({
+      key: `toggle-user:${targetUser._id}`,
+      feedbackController: rowFeedback,
+      loadingMsg: targetUser.status === USER_STATUSES.PAUSED ? "Resuming account..." : "Pausing account...",
+      successMsg: targetUser.status === USER_STATUSES.PAUSED ? "Account resumed successfully." : "Account paused successfully.",
+      errorMsg: targetUser.status === USER_STATUSES.PAUSED ? "Unable to resume account." : "Unable to pause account.",
+      rowUserId: targetUser._id,
+      action: () => {
+        if (targetUser.status === USER_STATUSES.PAUSED) {
+          return resumeUser(targetUser._id);
+        }
+        return pauseUser(targetUser._id);
+      },
+    });
   }
 
   async function handleDelete() {
@@ -243,13 +325,22 @@ export function UsersPage() {
       return;
     }
 
-    await withRefresh(async () => {
-      await deleteUser(deleteUserTarget._id);
-      setDeleteUserTarget(null);
-    }, "User deleted successfully.");
+    await runUserAction({
+      key: `delete-user:${deleteUserTarget._id}`,
+      feedbackController: deleteFeedback,
+      loadingMsg: "Deleting user...",
+      successMsg: "User deleted successfully.",
+      errorMsg: "Unable to delete user.",
+      action: () => deleteUser(deleteUserTarget._id),
+      afterSuccess: () => {
+        setDeleteUserTarget(null);
+        deleteFeedback.clear();
+      },
+    });
   }
 
   function openEditModal(targetUser) {
+    editFeedback.clear();
     setEditingUser(targetUser);
     setEditForm({
       firstName: targetUser.firstName || "",
@@ -262,6 +353,7 @@ export function UsersPage() {
   }
 
   function openResetModal(targetUser) {
+    resetFeedback.clear();
     setResetPasswordUser(targetUser);
     setPasswordForm(emptyPasswordForm);
     setShowResetPassword(false);
@@ -287,8 +379,7 @@ export function UsersPage() {
 
   return (
     <div className="page-stack users-page">
-      {message ? <div className="page-message success">{message}</div> : null}
-      {error ? <div className="page-message error">{error}</div> : null}
+      {loadError ? <div className="page-message error">{loadError}</div> : null}
 
       <SectionCard
         title="User Management"
@@ -532,10 +623,18 @@ export function UsersPage() {
           </div>
 
           <div className="users-create-actions">
-            <button className="button users-create-submit" type="submit" disabled={!createFormValid || submitting}>
-              {submitting ? "Creating..." : "Create User"}
+            <button className="button users-create-submit with-spinner" type="submit" disabled={!createFormValid || busyKey === "create-user"}>
+              {busyKey === "create-user" ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+              <span>{busyKey === "create-user" ? "Creating..." : "Create User"}</span>
             </button>
           </div>
+          <ActionFeedback
+            type={createFeedback.feedback?.type}
+            message={createFeedback.feedback?.message}
+            autoDismissMs={createFeedback.feedback?.autoDismissMs}
+            onClose={createFeedback.clear}
+            className="action-feedback-inline"
+          />
         </form>
         ) : (
           <div className="page-message">You do not have permission to create users.</div>
@@ -562,7 +661,7 @@ export function UsersPage() {
                   const canDelete = !isSelf;
 
                   return (
-                    <tr key={targetUser._id}>
+                    <tr key={targetUser._id} className={highlightedUserId === targetUser._id ? "row-flash" : ""}>
                       <td>
                         <strong>
                           {targetUser.firstName} {targetUser.lastName}
@@ -577,6 +676,7 @@ export function UsersPage() {
                       </td>
                       {canSeeUserActions ? (
                         <td>
+                          <div className="row-feedback-slot">
                           <ActionMenu
                             label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
                             items={[
@@ -607,10 +707,27 @@ export function UsersPage() {
                                 icon: "🗑️",
                                 hidden: !canDelete || !canDeleteUser,
                                 danger: true,
-                                onClick: () => setDeleteUserTarget(targetUser),
+                                onClick: () => {
+                                  deleteFeedback.clear();
+                                  setDeleteUserTarget(targetUser);
+                                },
                               },
                             ]}
                           />
+                          {activeRowFeedbackId === targetUser._id ? (
+                            <ActionFeedback
+                              type={rowFeedback.feedback?.type}
+                              message={rowFeedback.feedback?.message}
+                              autoDismissMs={rowFeedback.feedback?.autoDismissMs}
+                              onClose={() => {
+                                rowFeedback.clear();
+                                setActiveRowFeedbackId("");
+                              }}
+                              compact
+                              className="action-feedback-row"
+                            />
+                          ) : null}
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -631,13 +748,23 @@ export function UsersPage() {
           title="Edit User"
           subtitle={`Email is fixed for ${editingUser.email}`}
           onClose={() => setEditingUser(null)}
+          feedback={
+            <ActionFeedback
+              type={editFeedback.feedback?.type}
+              message={editFeedback.feedback?.message}
+              autoDismissMs={editFeedback.feedback?.autoDismissMs}
+              onClose={editFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setEditingUser(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingUser(null)} disabled={busyKey === `edit-user:${editingUser._id}`}>
                 Cancel
               </button>
-              <button className="button dark button-rect" type="button" onClick={handleEdit} disabled={submitting}>
-                {submitting ? "Saving..." : "Save Changes"}
+              <button className="button dark button-rect with-spinner" type="button" onClick={handleEdit} disabled={busyKey === `edit-user:${editingUser._id}`}>
+                {busyKey === `edit-user:${editingUser._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `edit-user:${editingUser._id}` ? "Saving..." : "Save Changes"}</span>
               </button>
             </>
           }
@@ -782,13 +909,23 @@ export function UsersPage() {
           title="Reset Password"
           subtitle={`Set a new password for ${resetPasswordUser.firstName} ${resetPasswordUser.lastName}`}
           onClose={() => setResetPasswordUser(null)}
+          feedback={
+            <ActionFeedback
+              type={resetFeedback.feedback?.type}
+              message={resetFeedback.feedback?.message}
+              autoDismissMs={resetFeedback.feedback?.autoDismissMs}
+              onClose={resetFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setResetPasswordUser(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setResetPasswordUser(null)} disabled={busyKey === `reset-user:${resetPasswordUser._id}`}>
                 Cancel
               </button>
-              <button className="button dark button-rect" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || submitting}>
-                {submitting ? "Updating..." : "Update Password"}
+              <button className="button dark button-rect with-spinner" type="button" onClick={handlePasswordReset} disabled={!resetFormValid || busyKey === `reset-user:${resetPasswordUser._id}`}>
+                {busyKey === `reset-user:${resetPasswordUser._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `reset-user:${resetPasswordUser._id}` ? "Updating..." : "Update Password"}</span>
               </button>
             </>
           }
@@ -819,13 +956,23 @@ export function UsersPage() {
           title="Delete User"
           subtitle={`This will soft-delete ${deleteUserTarget.firstName} ${deleteUserTarget.lastName}.`}
           onClose={() => setDeleteUserTarget(null)}
+          feedback={
+            <ActionFeedback
+              type={deleteFeedback.feedback?.type}
+              message={deleteFeedback.feedback?.message}
+              autoDismissMs={deleteFeedback.feedback?.autoDismissMs}
+              onClose={deleteFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setDeleteUserTarget(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeleteUserTarget(null)} disabled={busyKey === `delete-user:${deleteUserTarget._id}`}>
                 Cancel
               </button>
-              <button className="button danger button-rect" type="button" onClick={handleDelete} disabled={submitting}>
-                {submitting ? "Deleting..." : "Delete User"}
+              <button className="button danger button-rect with-spinner" type="button" onClick={handleDelete} disabled={busyKey === `delete-user:${deleteUserTarget._id}`}>
+                {busyKey === `delete-user:${deleteUserTarget._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `delete-user:${deleteUserTarget._id}` ? "Deleting..." : "Delete User"}</span>
               </button>
             </>
           }

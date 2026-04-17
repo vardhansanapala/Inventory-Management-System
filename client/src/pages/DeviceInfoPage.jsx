@@ -176,7 +176,7 @@ export function DeviceInfoPage() {
         <div className="device-info-toolbar">
           <input
             className="input"
-            placeholder="Search by Asset ID or device name"
+            placeholder="Search by SKU or serial number"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
           />
@@ -234,7 +234,7 @@ export function DeviceInfoPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6}>No assets found.</td>
+                  <td colSpan={6}>No results found</td>
                 </tr>
               )}
             </tbody>
@@ -304,4 +304,3 @@ export function DeviceInfoPage() {
     </div>
   );
 }
-

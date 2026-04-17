@@ -1,4 +1,4 @@
-export function DataTable({ columns, rows, emptyMessage = "No records found." }) {
+export function DataTable({ columns, rows, emptyMessage = "No records found.", getRowClassName }) {
   return (
     <div className="table-wrap">
       <table className="table">
@@ -12,7 +12,7 @@ export function DataTable({ columns, rows, emptyMessage = "No records found." })
         <tbody>
           {rows.length ? (
             rows.map((row, rowIndex) => (
-              <tr key={row.key || rowIndex}>
+              <tr key={row.key || rowIndex} className={getRowClassName ? getRowClassName(row) : ""}>
                 {columns.map((column) => (
                   <td key={column.key}>{typeof column.render === "function" ? column.render(row) : row[column.key]}</td>
                 ))}
@@ -28,4 +28,3 @@ export function DataTable({ columns, rows, emptyMessage = "No records found." })
     </div>
   );
 }
-

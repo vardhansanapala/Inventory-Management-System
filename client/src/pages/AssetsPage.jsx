@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
 import {
   createAsset,
@@ -13,6 +13,7 @@ import {
   regenerateAssetQr,
   updateAsset,
 } from "../api/inventory";
+import { ActionFeedback } from "../components/ActionFeedback";
 import { ActionMenu } from "../components/ActionMenu";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
@@ -25,6 +26,7 @@ import {
 } from "../constants/assetWorkflow";
 import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
+import { useActionFeedback } from "../hooks/useActionFeedback";
 import { getAssetId, getAssetScanUrl } from "../utils/asset.util";
 import { extractAssetId } from "../utils/qrParser.util";
 const sectionTabs = [
@@ -165,22 +167,23 @@ const emptySetupData = {
   users: [],
 };
 
-export function AssetsPage() {
+export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [setupData, setSetupData] = useState(emptySetupData);
   const [setupLoading, setSetupLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(() => normalizeTab(searchParams.get("tab")));
+  const [loadError, setLoadError] = useState("");
+  const initialTab = forcedTab ? normalizeTab(forcedTab) : normalizeTab(searchParams.get("tab"));
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [assets, setAssets] = useState([]);
   const [assetLogs, setAssetLogs] = useState([]);
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [selectedAsset, setSelectedAsset] = useState(null);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") || "");
-  const [quickAccessId, setQuickAccessId] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [latestCreatedAsset, setLatestCreatedAsset] = useState(null);
   const [selectedAssetQrUrl, setSelectedAssetQrUrl] = useState("");
   const [selectedAssetQrLoading, setSelectedAssetQrLoading] = useState(false);
@@ -208,7 +211,14 @@ export function AssetsPage() {
   const detectorRef = useRef(null);
   const scanHandledRef = useRef(false);
   const copyTimeoutRef = useRef(null);
+  const flashTimeoutRef = useRef(null);
+  const [flashRowId, setFlashRowId] = useState("");
+  const [flashRowVariant, setFlashRowVariant] = useState("success");
+  const [actionSubmitting, setActionSubmitting] = useState(false);
   const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+  const searchDebounceRef = useRef(null);
+  const previousSearchRef = useRef("");
+  const incomingAssetId = incomingAsset?._id || "";
 
   const canCreateAsset = hasPermission(currentUser, PERMISSIONS.CREATE_ASSET);
   const canUpdateAsset = hasPermission(currentUser, PERMISSIONS.UPDATE_ASSET);
@@ -218,6 +228,10 @@ export function AssetsPage() {
   const [editingAsset, setEditingAsset] = useState(null);
   const [editForm, setEditForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", status: ASSET_STATUSES.AVAILABLE });
   const [deleteAssetTarget, setDeleteAssetTarget] = useState(null);
+  const selectionFeedback = useActionFeedback();
+  const createFeedback = useActionFeedback({ preferGlobal: true });
+  const workflowFeedback = useActionFeedback();
+  const modalFeedback = useActionFeedback();
   const [actionForm, setActionForm] = useState({
     action: ASSET_ACTIONS.ASSIGN_DEVICE,
     reason: "OTHER",
@@ -255,14 +269,50 @@ export function AssetsPage() {
     copyTimeoutRef.current = window.setTimeout(() => setCopiedScanUrl(""), 1800);
   }
 
+  function clearSelectedAssetState() {
+    setSelectedAssetId("");
+    setSelectedAsset(null);
+    setAssetLogs([]);
+    setAssignLookupInput("");
+  }
+
   function updateActiveTab(nextTab) {
     const normalizedTab = normalizeTab(nextTab);
-    setActiveTab(normalizedTab);
-    setSearchParams((currentParams) => {
-      const nextParams = new URLSearchParams(currentParams);
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (normalizedTab === "registry") {
+      nextParams.delete("tab");
+    } else {
       nextParams.set("tab", normalizedTab);
-      return nextParams;
-    }, { replace: true });
+    }
+
+    if (normalizedTab !== "assign") {
+      clearSelectedAssetState();
+    }
+
+    if (normalizedTab === "assign" && location.pathname !== "/assign-device") {
+      navigate(
+        {
+          pathname: "/assign-device",
+          search: nextParams.toString() ? `?${nextParams.toString()}` : "",
+        },
+        {
+          state: selectedAsset ? { asset: selectedAsset } : null,
+        }
+      );
+      return;
+    }
+
+    if (normalizedTab !== "assign" && location.pathname === "/assign-device") {
+      navigate({
+        pathname: "/assets",
+        search: nextParams.toString() ? `?${nextParams.toString()}` : "",
+      });
+      return;
+    }
+
+    setActiveTab(normalizedTab);
+    setSearchParams(nextParams, { replace: true });
   }
 
   useEffect(() => {
@@ -281,7 +331,7 @@ export function AssetsPage() {
           setAssetLogs([]);
         }
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setLoadError(err.message));
   }
 
   function buildAssetListFilters(nextSearch) {
@@ -294,6 +344,7 @@ export function AssetsPage() {
 
   async function loadSetupData() {
     try {
+      setLoadError("");
       setSetupLoading(true);
       const data = await getAssetsBootstrap();
       setSetupData({
@@ -302,7 +353,7 @@ export function AssetsPage() {
         users: Array.isArray(data?.users) ? data.users : [],
       });
     } catch (err) {
-      setError(err.message);
+      setLoadError(err.message);
     } finally {
       setSetupLoading(false);
     }
@@ -365,7 +416,41 @@ export function AssetsPage() {
     setAssignLookupInput(assetId);
 
     if (selectionMessage) {
-      setMessage(selectionMessage);
+      selectionFeedback.showSuccess(selectionMessage);
+    }
+  }
+
+  function flashRow(assetMongoId, variant = "success") {
+    if (!assetMongoId) return;
+    setFlashRowId(assetMongoId);
+    setFlashRowVariant(variant);
+    window.clearTimeout(flashTimeoutRef.current);
+    flashTimeoutRef.current = window.setTimeout(() => {
+      setFlashRowId("");
+      setFlashRowVariant("success");
+    }, 1400);
+  }
+
+  function getOptimisticNextStatus(currentStatus, action) {
+    switch (action) {
+      case ASSET_ACTIONS.ASSIGN_DEVICE:
+        return ASSET_STATUSES.ASSIGNED;
+      case ASSET_ACTIONS.UNASSIGN_DEVICE:
+        return ASSET_STATUSES.AVAILABLE;
+      case ASSET_ACTIONS.SEND_OUTSIDE:
+        return ASSET_STATUSES.OUTSIDE;
+      case ASSET_ACTIONS.RETURN_DEVICE:
+        return ASSET_STATUSES.AVAILABLE;
+      case ASSET_ACTIONS.SEND_FOR_REPAIR:
+        return ASSET_STATUSES.UNDER_REPAIR;
+      case ASSET_ACTIONS.COMPLETE_REPAIR:
+        return ASSET_STATUSES.AVAILABLE;
+      case ASSET_ACTIONS.SELL_DEVICE:
+        return ASSET_STATUSES.SOLD;
+      case ASSET_ACTIONS.MARK_LOST:
+        return ASSET_STATUSES.LOST;
+      default:
+        return currentStatus;
     }
   }
 
@@ -376,8 +461,7 @@ export function AssetsPage() {
 
     const setRegenerating = target === "selected" ? setSelectedAssetQrRegenerating : setCreatedAssetQrRegenerating;
     setRegenerating(true);
-    setError("");
-    setMessage("");
+    workflowFeedback.clear();
 
     try {
       const refreshedAsset = await regenerateAssetQr(asset._id);
@@ -402,22 +486,22 @@ export function AssetsPage() {
       } else {
         await refreshQrPreview(target, getAssetId(refreshedAsset));
       }
-      setMessage(`QR regenerated for ${getAssetId(refreshedAsset)}.`);
+      (target === "created" ? createFeedback : workflowFeedback).showSuccess(`QR regenerated for ${getAssetId(refreshedAsset)}.`);
     } catch (err) {
-      setError(err.message || "Unable to regenerate the QR code.");
+      (target === "created" ? createFeedback : workflowFeedback).showError(err.message || "Unable to regenerate the QR code.");
     } finally {
       setRegenerating(false);
     }
   }
 
   async function handleSelectAsset(assetId) {
-    setError("");
+    selectionFeedback.clear();
 
     try {
       const asset = await getAssetById(assetId);
       await applySelectedAsset(asset, `Selected ${getAssetId(asset)}. Actions now apply only to this device.`);
     } catch (err) {
-      setError(err.message);
+      selectionFeedback.showError(err.message || "Unable to select device.");
     }
   }
 
@@ -429,26 +513,12 @@ export function AssetsPage() {
     const resolvedAssetId = getAssetId(asset);
     const registrySearch = assets.some((item) => item._id === asset._id) ? search : resolvedAssetId;
     setAssignLookupInput(resolvedAssetId);
+    setSearchInput(registrySearch);
+    previousSearchRef.current = registrySearch.trim();
     setSearch(registrySearch);
     await loadAssets(buildAssetListFilters(registrySearch));
     await applySelectedAsset(asset, `${resolvedAssetId} is now selected from ${sourceLabel}.`);
     return asset;
-  }
-
-  async function openQuickAccess(event) {
-    event.preventDefault();
-    if (!quickAccessId.trim()) return;
-
-    setError("");
-    setMessage("");
-
-    try {
-      await lookupAndSelectAsset(quickAccessId, "quick access");
-      updateActiveTab("registry");
-      setMessage("Quick access selected the device and focused the registry.");
-    } catch (err) {
-      setError(err.message || "Asset not found");
-    }
   }
 
   function stopScanner() {
@@ -489,13 +559,12 @@ export function AssetsPage() {
     setLastDecodedValue(decodedValue);
     setAssignLookupInput(assetIdentifier);
     setAssignLookupBusy(true);
-    setError("");
-    setMessage("");
+    selectionFeedback.clear();
 
     try {
       await lookupAndSelectAsset(assetIdentifier, sourceLabel);
     } catch (err) {
-      setError(err.message || "Unable to select the scanned device.");
+      selectionFeedback.showError(err.message || "Unable to select the scanned device.");
       fallbackToManual("The scanned value could not be matched to a device. Manual Asset ID entry has been enabled.");
       return;
     } finally {
@@ -545,8 +614,7 @@ export function AssetsPage() {
   async function startScanner() {
     updateActiveTab("assign");
     setAssignMode("scan");
-    setError("");
-    setMessage("");
+    selectionFeedback.clear();
     setScanError("");
     setScanStatus("requesting");
     setScanEngine("native");
@@ -603,13 +671,25 @@ export function AssetsPage() {
 
   useEffect(() => {
     loadSetupData();
-    loadAssets(buildAssetListFilters(""));
   }, []);
 
   useEffect(() => {
-    const nextTab = normalizeTab(searchParams.get("tab"));
+    window.clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = window.setTimeout(() => {
+      const nextSearch = searchInput.trim();
+      if (previousSearchRef.current !== nextSearch) {
+        previousSearchRef.current = nextSearch;
+        setSearch(nextSearch);
+      }
+    }, 400);
+
+    return () => window.clearTimeout(searchDebounceRef.current);
+  }, [searchInput]);
+
+  useEffect(() => {
+    const nextTab = forcedTab ? normalizeTab(forcedTab) : normalizeTab(searchParams.get("tab"));
     setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab));
-  }, [searchParams]);
+  }, [forcedTab, searchParams]);
 
   useEffect(() => {
     const nextStatus = searchParams.get("status") || "";
@@ -618,21 +698,40 @@ export function AssetsPage() {
 
   useEffect(() => {
     loadAssets(buildAssetListFilters());
-  }, [statusFilter]);
+  }, [search, statusFilter]);
 
   useEffect(() => {
-    const assetId = searchParams.get("assetId");
-    if (!assetId) return;
+    if (!incomingAssetId) return;
 
-    updateActiveTab("assign");
-    handleSelectAsset(assetId);
+    let isCancelled = false;
 
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.delete("assetId");
-      return next;
-    }, { replace: true });
-  }, [searchParams]);
+    async function consumeIncomingAsset() {
+      try {
+        const asset = await getAssetById(incomingAssetId);
+        if (isCancelled) return;
+        await applySelectedAsset(asset);
+      } catch (err) {
+        if (isCancelled) return;
+        selectionFeedback.showError(err.message || "Unable to load the selected device.");
+      } finally {
+        if (!isCancelled) {
+          navigate(
+            {
+              pathname: location.pathname,
+              search: location.search,
+            },
+            { replace: true, state: null }
+          );
+        }
+      }
+    }
+
+    consumeIncomingAsset();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [incomingAssetId, location.pathname, location.search, navigate, selectionFeedback]);
 
   useEffect(() => {
     loadQrPreview(getAssetId(selectedAsset), {
@@ -683,6 +782,7 @@ export function AssetsPage() {
       if (selectedAssetQrUrl) URL.revokeObjectURL(selectedAssetQrUrl);
       if (createdAssetQrUrl) URL.revokeObjectURL(createdAssetQrUrl);
       window.clearTimeout(copyTimeoutRef.current);
+      window.clearTimeout(searchDebounceRef.current);
     };
   }, [selectedAssetQrUrl, createdAssetQrUrl]);
 
@@ -691,6 +791,7 @@ export function AssetsPage() {
   }
 
   function openEditAssetModal(asset) {
+    modalFeedback.clear();
     setEditingAsset(asset);
     setEditForm({
       productId: asset?.product?._id || "",
@@ -704,8 +805,7 @@ export function AssetsPage() {
   async function submitEditAsset() {
     if (!editingAsset?._id) return;
 
-    setError("");
-    setMessage("");
+    modalFeedback.clear();
 
     try {
       await updateAsset(editingAsset._id, {
@@ -720,17 +820,16 @@ export function AssetsPage() {
       if (selectedAssetId === editingAsset._id) {
         await handleSelectAsset(editingAsset._id);
       }
-      setMessage("Asset updated successfully.");
+      modalFeedback.showSuccess("Asset updated successfully.");
     } catch (err) {
-      setError(err.message || "Unable to update asset.");
+      modalFeedback.showError(err.message || "Unable to update asset.");
     }
   }
 
   async function confirmDeleteAsset() {
     if (!deleteAssetTarget?._id) return;
 
-    setError("");
-    setMessage("");
+    modalFeedback.clear();
 
     try {
       await deleteAsset(deleteAssetTarget._id);
@@ -742,9 +841,9 @@ export function AssetsPage() {
         setSelectedAsset(null);
         setAssetLogs([]);
       }
-      setMessage("Asset deleted successfully.");
+      modalFeedback.showSuccess("Asset deleted successfully.");
     } catch (err) {
-      setError(err.message || "Unable to delete asset.");
+      modalFeedback.showError(err.message || "Unable to delete asset.");
     }
   }
 
@@ -773,19 +872,18 @@ export function AssetsPage() {
 
   async function submitAsset(event) {
     event.preventDefault();
-    setError("");
-    setMessage("");
+    createFeedback.clear();
 
     try {
       setCreatedAssetQrRegenerating(true);
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
-      setMessage(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`);
+      createFeedback.showSuccess(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`, { global: true });
       setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
       await loadAssets(buildAssetListFilters());
       await handleSelectAsset(createdAsset._id);
     } catch (err) {
-      setError(err.message);
+      createFeedback.showError(err.message || "Unable to create asset.");
     } finally {
       setCreatedAssetQrRegenerating(false);
     }
@@ -794,13 +892,12 @@ export function AssetsPage() {
   async function handleAssignLookupSubmit(event) {
     event.preventDefault();
     setAssignLookupBusy(true);
-    setError("");
-    setMessage("");
+    selectionFeedback.clear();
 
     try {
       await lookupAndSelectAsset(assignLookupInput, "manual Asset ID entry");
     } catch (err) {
-      setError(err.message || "Device not found.");
+      selectionFeedback.showError(err.message || "Device not found.");
     } finally {
       setAssignLookupBusy(false);
     }
@@ -820,27 +917,65 @@ export function AssetsPage() {
     event.preventDefault();
 
     if (!selectedAssetId) {
-      setError("Select a device first. The action form only works on the selected device.");
+      workflowFeedback.showError("Select a device first. The action form only works on the selected device.");
       return;
     }
 
     if (!validActionOptions.includes(actionForm.action)) {
-      setMessage("This device does not allow that action in its current status.");
+      workflowFeedback.showError("This device does not allow that action in its current status.");
       return;
     }
 
     if (selectedAssetRequiresAssignee && !actionForm.assignedToId) {
-      setError("Select an assignee before assigning the device.");
+      workflowFeedback.showError("Select an assignee before assigning the device.");
       return;
     }
 
     if (selectedAssetRequiresExternalRecipient && !actionForm.externalRecipient.trim()) {
-      setError("Enter an external recipient before sending an available device outside.");
+      workflowFeedback.showError("Enter an external recipient before sending an available device outside.");
       return;
     }
 
-    setError("");
-    setMessage("");
+    workflowFeedback.clear();
+    setActionSubmitting(true);
+
+    const previousSelected = selectedAsset;
+    const previousAssets = assets;
+    const optimisticNextStatus = getOptimisticNextStatus(selectedAsset?.status, actionForm.action);
+    const optimisticAssignee =
+      selectedAssetRequiresAssignee && actionForm.assignedToId
+        ? setupData.users.find((u) => String(u._id) === String(actionForm.assignedToId)) || null
+        : actionForm.action === ASSET_ACTIONS.UNASSIGN_DEVICE
+          ? null
+          : previousSelected?.assignedTo || null;
+    const optimisticLocation =
+      actionForm.locationId
+        ? setupData.locations.find((l) => String(l._id) === String(actionForm.locationId)) || previousSelected?.location || null
+        : previousSelected?.location || null;
+
+    // Optimistic UI: badge + row highlight + immediate list update.
+    setSelectedAsset((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        status: optimisticNextStatus || current.status,
+        assignedTo: optimisticAssignee,
+        location: optimisticLocation,
+      };
+    });
+    setAssets((current) =>
+      current.map((a) =>
+        a._id === selectedAssetId
+          ? {
+              ...a,
+              status: optimisticNextStatus || a.status,
+              assignedTo: optimisticAssignee,
+              location: optimisticLocation,
+            }
+          : a
+      )
+    );
+    flashRow(selectedAssetId, "success");
 
     try {
       const result = await performAssetAction(selectedAssetId, {
@@ -852,12 +987,19 @@ export function AssetsPage() {
       });
 
       setSelectedAsset(result.asset);
-      setMessage(`Action ${actionForm.action} completed for ${getAssetId(result.asset)}.`);
+      workflowFeedback.showSuccess(`Action ${actionForm.action} completed for ${getAssetId(result.asset)}.`);
       await loadAssets(buildAssetListFilters());
       const logs = await getAssetAuditLogs(selectedAssetId);
       setAssetLogs(logs);
     } catch (err) {
-      setError(err.message);
+      // Revert optimistic update and show local inline error.
+      setSelectedAsset(previousSelected);
+      setAssets(previousAssets);
+      flashRow(selectedAssetId, "error");
+      workflowFeedback.showError(err.message || "Action failed.");
+    }
+    finally {
+      setActionSubmitting(false);
     }
   }
 
@@ -867,8 +1009,7 @@ export function AssetsPage() {
 
   return (
     <div className="page-stack">
-      {message ? <div className="page-message success">{message}</div> : null}
-      {error ? <div className="page-message error">{error}</div> : null}
+      {loadError ? <div className="page-message error">{loadError}</div> : null}
 
       <div className="asset-tabs" role="tablist" aria-label="Device management sections">
         {sectionTabs
@@ -891,14 +1032,14 @@ export function AssetsPage() {
           subtitle="Search devices, then explicitly select one before running any action"
           actions={
             <div className="registry-actions">
-              <form className="inline-form" onSubmit={openQuickAccess}>
-                <input className="input" placeholder="Quick Access: asset ID or /scan/:assetId URL" value={quickAccessId} onChange={(event) => setQuickAccessId(event.target.value)} />
-                <button className="button dark" type="submit">Open</button>
-              </form>
-              <form className="inline-form" onSubmit={(event) => { event.preventDefault(); loadAssets(buildAssetListFilters()); }}>
-                <input className="input" placeholder="Search by asset code, SKU, or serial" value={search} onChange={(event) => setSearch(event.target.value)} />
-                <button className="button dark" type="submit">Search</button>
-              </form>
+              <div className="inline-form">
+                <input
+                  className="input"
+                  placeholder="Search by asset code, SKU, or serial"
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                />
+              </div>
             </div>
           }
         >
@@ -916,8 +1057,15 @@ export function AssetsPage() {
                 </tr>
               </thead>
               <tbody>
-                {assets.map((asset) => (
-                  <tr key={asset._id} className={selectedAssetId === asset._id ? "selected-row" : ""} onClick={() => handleSelectAsset(asset._id)}>
+                {assets.length ? assets.map((asset) => (
+                  <tr
+                    key={asset._id}
+                    className={[
+                      selectedAssetId === asset._id ? "selected-row" : "",
+                      flashRowId === asset._id ? `row-flash ${flashRowVariant === "error" ? "is-error" : ""}` : "",
+                    ].join(" ").trim()}
+                    onClick={() => handleSelectAsset(asset._id)}
+                  >
                     <td>
                       <strong>{getAssetId(asset)}</strong>
                       <div className="table-subtle">{asset.serialNumber || "No serial number"}</div>
@@ -944,7 +1092,10 @@ export function AssetsPage() {
                               icon: "🗑️",
                               danger: true,
                               hidden: !canDeleteAsset,
-                              onClick: () => setDeleteAssetTarget(asset),
+                              onClick: () => {
+                                modalFeedback.clear();
+                                setDeleteAssetTarget(asset);
+                              },
                             },
                           ]}
                         />
@@ -956,14 +1107,18 @@ export function AssetsPage() {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          navigate(`/assign-device?assetId=${encodeURIComponent(asset._id)}`);
+                          navigate("/assign-device", { state: { asset } });
                         }}
                       >
                         Select
                       </button>
                     </td>
                   </tr>
-                ))}
+                )) : (
+                  <tr>
+                    <td colSpan={canEditOrDeleteFromRegistry ? 7 : 6}>No results found</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -990,11 +1145,19 @@ export function AssetsPage() {
               </select>
               <textarea className="input textarea assets-full" name="notes" placeholder="Creation notes" value={createForm.notes} onChange={handleCreateChange} />
               <div className="form-actions assets-full">
-                <button className="button dark button-rect" type="submit" disabled={createdAssetQrRegenerating}>
-                  {createdAssetQrRegenerating ? "Creating..." : "Create Device"}
+                <button className="button dark button-rect with-spinner" type="submit" disabled={createdAssetQrRegenerating}>
+                  {createdAssetQrRegenerating ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                  <span>{createdAssetQrRegenerating ? "Creating..." : "Create Device"}</span>
                 </button>
               </div>
               </form>
+              <ActionFeedback
+                type={createFeedback.feedback?.type}
+                message={createFeedback.feedback?.message}
+                autoDismissMs={createFeedback.feedback?.autoDismissMs}
+                onClose={createFeedback.clear}
+                className="action-feedback-inline"
+              />
             </SectionCard>
 
             <SectionCard title="QR + actions" subtitle="Download, copy, or regenerate the QR for this device.">
@@ -1046,9 +1209,19 @@ export function AssetsPage() {
                   value={assignLookupInput}
                   onChange={(event) => setAssignLookupInput(event.target.value)}
                 />
-                <button className="button dark" type="submit" disabled={assignLookupBusy}>{assignLookupBusy ? "Selecting..." : "Select Device"}</button>
+                <button className="button dark with-spinner" type="submit" disabled={assignLookupBusy}>
+                  {assignLookupBusy ? <span className="button-spinner" aria-hidden /> : null}
+                  <span>{assignLookupBusy ? "Selecting..." : "Select Device"}</span>
+                </button>
                 <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={assignLookupBusy}>Simulate Scan</button>
               </form>
+              <ActionFeedback
+                type={selectionFeedback.feedback?.type}
+                message={selectionFeedback.feedback?.message}
+                autoDismissMs={selectionFeedback.feedback?.autoDismissMs}
+                onClose={selectionFeedback.clear}
+                className="action-feedback-inline"
+              />
 
               {assignMode === "scan" ? (
                 <div className="scan-mode-panel">
@@ -1103,6 +1276,13 @@ export function AssetsPage() {
                 />
 
                 <div className="divider-line" />
+                <ActionFeedback
+                  type={workflowFeedback.feedback?.type}
+                  message={workflowFeedback.feedback?.message}
+                  autoDismissMs={workflowFeedback.feedback?.autoDismissMs}
+                  onClose={workflowFeedback.clear}
+                  className="action-feedback-inline"
+                />
 
                 <form className="form-grid" onSubmit={submitAction}>
                   <fieldset className="action-fieldset" disabled={!selectedAsset || !validActionOptions.length}>
@@ -1141,8 +1321,13 @@ export function AssetsPage() {
                     {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="vendor" placeholder="Vendor (repair only)" value={actionForm.vendor} onChange={handleActionChange} /> : null}
                     {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" type="number" name="cost" placeholder="Cost" value={actionForm.cost} onChange={handleActionChange} /> : null}
                     <textarea className="input textarea" name="notes" placeholder="Action notes" value={actionForm.notes} onChange={handleActionChange} />
-                    <button className="button dark button-rect" type="submit" disabled={!selectedAsset || !validActionOptions.length}>
-                      Apply Action
+                    <button
+                      className="button dark button-rect with-spinner"
+                      type="submit"
+                      disabled={!selectedAsset || !validActionOptions.length || actionSubmitting}
+                    >
+                      {actionSubmitting ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                      <span>{actionSubmitting ? "Applying..." : "Apply Action"}</span>
                     </button>
                   </fieldset>
                 </form>
@@ -1157,13 +1342,22 @@ export function AssetsPage() {
           title="Edit Asset"
           subtitle={`Update details for ${getAssetId(editingAsset)}`}
           onClose={() => setEditingAsset(null)}
+          feedback={
+            <ActionFeedback
+              type={modalFeedback.feedback?.type}
+              message={modalFeedback.feedback?.message}
+              autoDismissMs={modalFeedback.feedback?.autoDismissMs}
+              onClose={modalFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
               <button className="button ghost button-rect" type="button" onClick={() => setEditingAsset(null)}>
                 Cancel
               </button>
-              <button className="button dark button-rect" type="button" onClick={submitEditAsset} disabled={!canUpdateAsset}>
-                Save
+              <button className="button dark button-rect with-spinner" type="button" onClick={submitEditAsset} disabled={!canUpdateAsset}>
+                <span>Save</span>
               </button>
             </>
           }
@@ -1229,13 +1423,22 @@ export function AssetsPage() {
           title="Delete Asset"
           subtitle="Are you sure you want to delete this asset?"
           onClose={() => setDeleteAssetTarget(null)}
+          feedback={
+            <ActionFeedback
+              type={modalFeedback.feedback?.type}
+              message={modalFeedback.feedback?.message}
+              autoDismissMs={modalFeedback.feedback?.autoDismissMs}
+              onClose={modalFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
               <button className="button ghost button-rect" type="button" onClick={() => setDeleteAssetTarget(null)}>
                 Cancel
               </button>
-              <button className="button danger button-rect" type="button" onClick={confirmDeleteAsset} disabled={!canDeleteAsset}>
-                Delete
+              <button className="button danger button-rect with-spinner" type="button" onClick={confirmDeleteAsset} disabled={!canDeleteAsset}>
+                <span>Delete</span>
               </button>
             </>
           }

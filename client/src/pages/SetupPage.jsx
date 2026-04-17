@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createCategory,
   createLocation,
@@ -11,6 +11,7 @@ import {
   updateLocation,
   updateProduct,
 } from "../api/inventory";
+import { ActionFeedback } from "../components/ActionFeedback";
 import { DataTable } from "../components/DataTable";
 import { FormInput, FormTextarea } from "../components/FormFields";
 import { Modal } from "../components/Modal";
@@ -19,6 +20,7 @@ import { SectionCard } from "../components/SectionCard";
 import { SearchInput } from "../components/SearchInput";
 import { canManageFullSetup } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
+import { useActionFeedback } from "../hooks/useActionFeedback";
 
 const emptySetupData = {
   categories: [],
@@ -37,9 +39,10 @@ export function SetupPage() {
   const { user } = useAuth();
   const [setupData, setSetupData] = useState(emptySetupData);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [busyKey, setBusyKey] = useState("");
+  const [highlightedRowId, setHighlightedRowId] = useState("");
+  const flashTimeoutRef = useRef(null);
   const isSuperAdmin = canManageFullSetup(user);
   const [activeSection, setActiveSection] = useState(SECTIONS.PRODUCTS);
 
@@ -71,10 +74,15 @@ export function SetupPage() {
     description: "",
   });
   const [deletingProduct, setDeletingProduct] = useState(null);
+  const categoryFeedback = useActionFeedback();
+  const locationFeedback = useActionFeedback();
+  const productFeedback = useActionFeedback();
+  const modalFeedback = useActionFeedback();
+  const deleteFeedback = useActionFeedback();
 
   async function loadSetupData() {
     try {
-      setError("");
+      setLoadError("");
       setLoading(true);
       const data = await getSetupBootstrap();
       setSetupData({
@@ -84,7 +92,7 @@ export function SetupPage() {
         users: Array.isArray(data?.users) ? data.users : [],
       });
     } catch (err) {
-      setError(err.message);
+      setLoadError(err.message);
     } finally {
       setLoading(false);
     }
@@ -94,24 +102,53 @@ export function SetupPage() {
     loadSetupData();
   }, []);
 
-  async function handleSubmit(event, submitter, successMessage, afterSuccess = null) {
-    event.preventDefault();
-    setError("");
-    setMessage("");
+  useEffect(() => () => {
+    window.clearTimeout(flashTimeoutRef.current);
+  }, []);
 
-    try {
-      setSubmitting(true);
-      await submitter();
-      await loadSetupData();
-      if (typeof afterSuccess === "function") {
-        afterSuccess();
+  function flashRow(rowId) {
+    if (!rowId) return;
+    setHighlightedRowId(rowId);
+    window.clearTimeout(flashTimeoutRef.current);
+    flashTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedRowId("");
+    }, 1800);
+  }
+
+  async function runSetupAction({
+    key,
+    feedbackController,
+    action,
+    loadingMsg,
+    successMsg,
+    errorMsg,
+    rowId,
+    afterSuccess,
+  }) {
+    setBusyKey(key);
+    const result = await feedbackController.handleAsyncAction(
+      async () => {
+        const value = await action();
+        await loadSetupData();
+        return value;
+      },
+      {
+        loadingMsg,
+        successMsg,
+        errorMsg,
       }
-      setMessage(successMessage);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
+    );
+
+    if (result && rowId) {
+      flashRow(rowId);
     }
+
+    if (result) {
+      afterSuccess?.(result);
+    }
+
+    setBusyKey("");
+    return result;
   }
 
   const pageTitle = useMemo(() => {
@@ -164,6 +201,7 @@ export function SetupPage() {
                 label: "Edit",
                 icon: "✏",
                 onClick: () => {
+                  modalFeedback.clear();
                   setEditingCategory(row);
                   setEditCategoryName(row.name || "");
                   setEditCategoryDescription(row.description || "");
@@ -174,7 +212,10 @@ export function SetupPage() {
                 label: "Delete",
                 icon: "🗑",
                 danger: true,
-                onClick: () => setDeletingCategory(row),
+                onClick: () => {
+                  deleteFeedback.clear();
+                  setDeletingCategory(row);
+                },
               },
             ]}
           />
@@ -206,6 +247,7 @@ export function SetupPage() {
                 label: "Edit",
                 icon: "✏",
                 onClick: () => {
+                  modalFeedback.clear();
                   setEditingLocation(row);
                   setEditLocationForm({
                     name: row.name || "",
@@ -220,7 +262,10 @@ export function SetupPage() {
                 label: "Delete",
                 icon: "🗑",
                 danger: true,
-                onClick: () => setDeletingLocation(row),
+                onClick: () => {
+                  deleteFeedback.clear();
+                  setDeletingLocation(row);
+                },
               },
             ]}
           />
@@ -247,6 +292,7 @@ export function SetupPage() {
               label: "Edit Product",
               icon: "✏",
               onClick: () => {
+                modalFeedback.clear();
                 setEditingProduct(row);
                 setEditProductForm({
                   categoryId: row.category?._id || "",
@@ -262,7 +308,10 @@ export function SetupPage() {
               label: "Delete Product",
               icon: "🗑",
               danger: true,
-              onClick: () => setDeletingProduct(row),
+              onClick: () => {
+                deleteFeedback.clear();
+                setDeletingProduct(row);
+              },
             },
           ]}
         />
@@ -272,8 +321,7 @@ export function SetupPage() {
 
   return (
     <div className="page-stack">
-      {message ? <div className="page-message success">{message}</div> : null}
-      {error ? <div className="page-message error">{error}</div> : null}
+      {loadError ? <div className="page-message error">{loadError}</div> : null}
 
       <SectionCard
         title="Setup"
@@ -314,21 +362,25 @@ export function SetupPage() {
               <div className="page-stack setup-section">
                 <form
                   className="form-grid wide-grid"
-                  onSubmit={(event) =>
-                    handleSubmit(
-                      event,
-                      () =>
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    runSetupAction({
+                      key: "create-category",
+                      feedbackController: categoryFeedback,
+                      loadingMsg: "Saving category...",
+                      successMsg: "Category saved successfully.",
+                      errorMsg: "Unable to save category.",
+                      action: () =>
                         createCategory({
                           name: categoryName,
                           description: categoryDescription,
                         }),
-                      "Category saved successfully.",
-                      () => {
+                      afterSuccess: () => {
                         setCategoryName("");
                         setCategoryDescription("");
-                      }
-                    )
-                  }
+                      },
+                    });
+                  }}
                 >
                   <FormInput
                     label="Category Name"
@@ -345,11 +397,19 @@ export function SetupPage() {
                     className="setup-textarea-align"
                   />
                   <div className="form-actions">
-                    <button className="button dark button-rect" type="submit" disabled={submitting || !categoryName.trim()}>
-                      {submitting ? "Saving..." : "Add Category"}
+                    <button className="button dark button-rect with-spinner" type="submit" disabled={busyKey === "create-category" || !categoryName.trim()}>
+                      {busyKey === "create-category" ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                      <span>{busyKey === "create-category" ? "Saving..." : "Add Category"}</span>
                     </button>
                   </div>
                 </form>
+                <ActionFeedback
+                  type={categoryFeedback.feedback?.type}
+                  message={categoryFeedback.feedback?.message}
+                  autoDismissMs={categoryFeedback.feedback?.autoDismissMs}
+                  onClose={categoryFeedback.clear}
+                  className="action-feedback-inline"
+                />
 
                 <div className="setup-table-toolbar">
                   <SearchInput value={categorySearch} onChange={setCategorySearch} placeholder="Search categories..." />
@@ -359,6 +419,7 @@ export function SetupPage() {
                   columns={categoriesColumns}
                   rows={filteredCategories.map((category) => ({ ...category, key: category._id }))}
                   emptyMessage="No categories found."
+                  getRowClassName={(row) => (highlightedRowId === row._id ? "row-flash" : "")}
                 />
               </div>
             </SectionCard>
@@ -371,18 +432,22 @@ export function SetupPage() {
               <div className="page-stack setup-section">
                 <form
                   className="form-grid wide-grid"
-                  onSubmit={(event) =>
-                    handleSubmit(
-                      event,
-                      () => {
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    runSetupAction({
+                      key: "create-location",
+                      feedbackController: locationFeedback,
+                      loadingMsg: "Saving location...",
+                      successMsg: "Location saved successfully.",
+                      errorMsg: "Unable to save location.",
+                      action: () => {
                         const formData = new FormData(event.target);
                         const payload = Object.fromEntries(formData.entries());
                         return createLocation(payload);
                       },
-                      "Location saved successfully.",
-                      () => event.target.reset()
-                    )
-                  }
+                      afterSuccess: () => event.target.reset(),
+                    });
+                  }}
                 >
                   <FormInput label="Location Name" name="name" placeholder="Head Office" required />
                   <FormInput label="Code" name="code" placeholder="HO" required />
@@ -397,11 +462,19 @@ export function SetupPage() {
                   </label>
                   <FormTextarea label="Address" name="address" placeholder="Address" className="setup-textarea-align" />
                   <div className="form-actions">
-                    <button className="button dark button-rect" type="submit" disabled={submitting}>
-                      {submitting ? "Saving..." : "Add Location"}
+                    <button className="button dark button-rect with-spinner" type="submit" disabled={busyKey === "create-location"}>
+                      {busyKey === "create-location" ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                      <span>{busyKey === "create-location" ? "Saving..." : "Add Location"}</span>
                     </button>
                   </div>
                 </form>
+                <ActionFeedback
+                  type={locationFeedback.feedback?.type}
+                  message={locationFeedback.feedback?.message}
+                  autoDismissMs={locationFeedback.feedback?.autoDismissMs}
+                  onClose={locationFeedback.clear}
+                  className="action-feedback-inline"
+                />
 
                 <div className="setup-table-toolbar">
                   <SearchInput value={locationSearch} onChange={setLocationSearch} placeholder="Search locations..." />
@@ -411,6 +484,7 @@ export function SetupPage() {
                   columns={locationsColumns}
                   rows={filteredLocations.map((location) => ({ ...location, key: location._id }))}
                   emptyMessage="No locations found."
+                  getRowClassName={(row) => (highlightedRowId === row._id ? "row-flash" : "")}
                 />
               </div>
             </SectionCard>
@@ -428,18 +502,22 @@ export function SetupPage() {
             <SectionCard title="Products / SKUs" subtitle="Relational SKU definitions linked to a category.">
               <form
                 className="form-grid wide-grid"
-                onSubmit={(event) =>
-                  handleSubmit(
-                    event,
-                    () => {
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runSetupAction({
+                    key: "create-product",
+                    feedbackController: productFeedback,
+                    loadingMsg: "Saving product...",
+                    successMsg: "Product saved successfully.",
+                    errorMsg: "Unable to save product.",
+                    action: () => {
                       const formData = new FormData(event.target);
                       const payload = Object.fromEntries(formData.entries());
                       return createProduct(payload);
                     },
-                    "Product saved successfully.",
-                    () => event.target.reset()
-                  )
-                }
+                    afterSuccess: () => event.target.reset(),
+                  });
+                }}
               >
                 <label className="field-stack">
                   <span>Category</span>
@@ -457,11 +535,19 @@ export function SetupPage() {
                 <FormInput label="SKU" name="sku" placeholder="DELL-LAT-5420" required />
                 <FormTextarea label="Description" name="description" placeholder="Description" />
                 <div className="form-actions">
-                  <button className="button dark button-rect" type="submit" disabled={submitting}>
-                    {submitting ? "Saving..." : "Add Product"}
+                  <button className="button dark button-rect with-spinner" type="submit" disabled={busyKey === "create-product"}>
+                    {busyKey === "create-product" ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                    <span>{busyKey === "create-product" ? "Saving..." : "Add Product"}</span>
                   </button>
                 </div>
               </form>
+              <ActionFeedback
+                type={productFeedback.feedback?.type}
+                message={productFeedback.feedback?.message}
+                autoDismissMs={productFeedback.feedback?.autoDismissMs}
+                onClose={productFeedback.clear}
+                className="action-feedback-inline"
+              />
             </SectionCard>
 
             <SectionCard title="Products Table" subtitle="Manage SKUs and their linked categories.">
@@ -472,6 +558,7 @@ export function SetupPage() {
                 columns={productsColumns}
                 rows={filteredProducts.map((product) => ({ ...product, key: product._id }))}
                 emptyMessage="No products found."
+                getRowClassName={(row) => (highlightedRowId === row._id ? "row-flash" : "")}
               />
             </SectionCard>
           </div>
@@ -483,29 +570,46 @@ export function SetupPage() {
           title="Edit Category"
           subtitle="Update name and description. Name will be stored uppercase."
           onClose={() => setEditingCategory(null)}
+          feedback={
+            <ActionFeedback
+              type={modalFeedback.feedback?.type}
+              message={modalFeedback.feedback?.message}
+              autoDismissMs={modalFeedback.feedback?.autoDismissMs}
+              onClose={modalFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setEditingCategory(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingCategory(null)} disabled={busyKey === `edit-category:${editingCategory._id}`}>
                 Cancel
               </button>
               <button
-                className="button dark button-rect"
+                className="button dark button-rect with-spinner"
                 type="button"
-                disabled={submitting || !editCategoryName.trim()}
+                disabled={busyKey === `edit-category:${editingCategory._id}` || !editCategoryName.trim()}
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () =>
+                  runSetupAction({
+                    key: `edit-category:${editingCategory._id}`,
+                    feedbackController: modalFeedback,
+                    loadingMsg: "Saving category...",
+                    successMsg: "Category updated successfully.",
+                    errorMsg: "Unable to update category.",
+                    rowId: editingCategory._id,
+                    action: () =>
                       updateCategory(editingCategory._id, {
                         name: editCategoryName,
                         description: editCategoryDescription,
                       }),
-                    "Category updated successfully.",
-                    () => setEditingCategory(null)
-                  )
+                    afterSuccess: () => {
+                      setEditingCategory(null);
+                      modalFeedback.clear();
+                    },
+                  })
                 }
               >
-                {submitting ? "Saving..." : "Save"}
+                {busyKey === `edit-category:${editingCategory._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `edit-category:${editingCategory._id}` ? "Saving..." : "Save"}</span>
               </button>
             </>
           }
@@ -531,25 +635,42 @@ export function SetupPage() {
           title="Edit Location"
           subtitle="Update location fields."
           onClose={() => setEditingLocation(null)}
+          feedback={
+            <ActionFeedback
+              type={modalFeedback.feedback?.type}
+              message={modalFeedback.feedback?.message}
+              autoDismissMs={modalFeedback.feedback?.autoDismissMs}
+              onClose={modalFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setEditingLocation(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingLocation(null)} disabled={busyKey === `edit-location:${editingLocation._id}`}>
                 Cancel
               </button>
               <button
-                className="button dark button-rect"
+                className="button dark button-rect with-spinner"
                 type="button"
-                disabled={submitting || !editLocationForm.name.trim() || !editLocationForm.code.trim()}
+                disabled={busyKey === `edit-location:${editingLocation._id}` || !editLocationForm.name.trim() || !editLocationForm.code.trim()}
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () => updateLocation(editingLocation._id, editLocationForm),
-                    "Location updated successfully.",
-                    () => setEditingLocation(null)
-                  )
+                  runSetupAction({
+                    key: `edit-location:${editingLocation._id}`,
+                    feedbackController: modalFeedback,
+                    loadingMsg: "Saving location...",
+                    successMsg: "Location updated successfully.",
+                    errorMsg: "Unable to update location.",
+                    rowId: editingLocation._id,
+                    action: () => updateLocation(editingLocation._id, editLocationForm),
+                    afterSuccess: () => {
+                      setEditingLocation(null);
+                      modalFeedback.clear();
+                    },
+                  })
                 }
               >
-                {submitting ? "Saving..." : "Save"}
+                {busyKey === `edit-location:${editingLocation._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `edit-location:${editingLocation._id}` ? "Saving..." : "Save"}</span>
               </button>
             </>
           }
@@ -592,25 +713,42 @@ export function SetupPage() {
           title="Edit Product"
           subtitle="Update product fields."
           onClose={() => setEditingProduct(null)}
+          feedback={
+            <ActionFeedback
+              type={modalFeedback.feedback?.type}
+              message={modalFeedback.feedback?.message}
+              autoDismissMs={modalFeedback.feedback?.autoDismissMs}
+              onClose={modalFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setEditingProduct(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setEditingProduct(null)} disabled={busyKey === `edit-product:${editingProduct._id}`}>
                 Cancel
               </button>
               <button
-                className="button dark button-rect"
+                className="button dark button-rect with-spinner"
                 type="button"
-                disabled={submitting || !editProductForm.sku.trim() || !editProductForm.brand.trim() || !editProductForm.model.trim() || !editProductForm.categoryId}
+                disabled={busyKey === `edit-product:${editingProduct._id}` || !editProductForm.sku.trim() || !editProductForm.brand.trim() || !editProductForm.model.trim() || !editProductForm.categoryId}
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () => updateProduct(editingProduct._id, editProductForm),
-                    "Product updated successfully.",
-                    () => setEditingProduct(null)
-                  )
+                  runSetupAction({
+                    key: `edit-product:${editingProduct._id}`,
+                    feedbackController: modalFeedback,
+                    loadingMsg: "Saving product...",
+                    successMsg: "Product updated successfully.",
+                    errorMsg: "Unable to update product.",
+                    rowId: editingProduct._id,
+                    action: () => updateProduct(editingProduct._id, editProductForm),
+                    afterSuccess: () => {
+                      setEditingProduct(null);
+                      modalFeedback.clear();
+                    },
+                  })
                 }
               >
-                {submitting ? "Saving..." : "Save"}
+                {busyKey === `edit-product:${editingProduct._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `edit-product:${editingProduct._id}` ? "Saving..." : "Save"}</span>
               </button>
             </>
           }
@@ -661,25 +799,41 @@ export function SetupPage() {
           title="Delete Category"
           subtitle="Are you sure you want to delete this category?"
           onClose={() => setDeletingCategory(null)}
+          feedback={
+            <ActionFeedback
+              type={deleteFeedback.feedback?.type}
+              message={deleteFeedback.feedback?.message}
+              autoDismissMs={deleteFeedback.feedback?.autoDismissMs}
+              onClose={deleteFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setDeletingCategory(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeletingCategory(null)} disabled={busyKey === `delete-category:${deletingCategory._id}`}>
                 Cancel
               </button>
               <button
-                className="button danger button-rect"
+                className="button danger button-rect with-spinner"
                 type="button"
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () => deleteCategory(deletingCategory._id),
-                    "Category deleted successfully.",
-                    () => setDeletingCategory(null)
-                  )
+                  runSetupAction({
+                    key: `delete-category:${deletingCategory._id}`,
+                    feedbackController: deleteFeedback,
+                    loadingMsg: "Deleting category...",
+                    successMsg: "Category deleted successfully.",
+                    errorMsg: "Unable to delete category.",
+                    action: () => deleteCategory(deletingCategory._id),
+                    afterSuccess: () => {
+                      setDeletingCategory(null);
+                      deleteFeedback.clear();
+                    },
+                  })
                 }
-                disabled={submitting}
+                disabled={busyKey === `delete-category:${deletingCategory._id}`}
               >
-                {submitting ? "Deleting..." : "Delete"}
+                {busyKey === `delete-category:${deletingCategory._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `delete-category:${deletingCategory._id}` ? "Deleting..." : "Delete"}</span>
               </button>
             </>
           }
@@ -691,25 +845,41 @@ export function SetupPage() {
           title="Delete Location"
           subtitle="Are you sure you want to delete this location?"
           onClose={() => setDeletingLocation(null)}
+          feedback={
+            <ActionFeedback
+              type={deleteFeedback.feedback?.type}
+              message={deleteFeedback.feedback?.message}
+              autoDismissMs={deleteFeedback.feedback?.autoDismissMs}
+              onClose={deleteFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setDeletingLocation(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeletingLocation(null)} disabled={busyKey === `delete-location:${deletingLocation._id}`}>
                 Cancel
               </button>
               <button
-                className="button danger button-rect"
+                className="button danger button-rect with-spinner"
                 type="button"
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () => deleteLocation(deletingLocation._id),
-                    "Location deleted successfully.",
-                    () => setDeletingLocation(null)
-                  )
+                  runSetupAction({
+                    key: `delete-location:${deletingLocation._id}`,
+                    feedbackController: deleteFeedback,
+                    loadingMsg: "Deleting location...",
+                    successMsg: "Location deleted successfully.",
+                    errorMsg: "Unable to delete location.",
+                    action: () => deleteLocation(deletingLocation._id),
+                    afterSuccess: () => {
+                      setDeletingLocation(null);
+                      deleteFeedback.clear();
+                    },
+                  })
                 }
-                disabled={submitting}
+                disabled={busyKey === `delete-location:${deletingLocation._id}`}
               >
-                {submitting ? "Deleting..." : "Delete"}
+                {busyKey === `delete-location:${deletingLocation._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `delete-location:${deletingLocation._id}` ? "Deleting..." : "Delete"}</span>
               </button>
             </>
           }
@@ -721,25 +891,41 @@ export function SetupPage() {
           title="Delete Product"
           subtitle="Are you sure you want to delete this product?"
           onClose={() => setDeletingProduct(null)}
+          feedback={
+            <ActionFeedback
+              type={deleteFeedback.feedback?.type}
+              message={deleteFeedback.feedback?.message}
+              autoDismissMs={deleteFeedback.feedback?.autoDismissMs}
+              onClose={deleteFeedback.clear}
+              className="action-feedback-inline"
+            />
+          }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setDeletingProduct(null)} disabled={submitting}>
+              <button className="button ghost button-rect" type="button" onClick={() => setDeletingProduct(null)} disabled={busyKey === `delete-product:${deletingProduct._id}`}>
                 Cancel
               </button>
               <button
-                className="button danger button-rect"
+                className="button danger button-rect with-spinner"
                 type="button"
                 onClick={() =>
-                  handleSubmit(
-                    { preventDefault: () => {} },
-                    () => deleteProduct(deletingProduct._id),
-                    "Product deleted successfully.",
-                    () => setDeletingProduct(null)
-                  )
+                  runSetupAction({
+                    key: `delete-product:${deletingProduct._id}`,
+                    feedbackController: deleteFeedback,
+                    loadingMsg: "Deleting product...",
+                    successMsg: "Product deleted successfully.",
+                    errorMsg: "Unable to delete product.",
+                    action: () => deleteProduct(deletingProduct._id),
+                    afterSuccess: () => {
+                      setDeletingProduct(null);
+                      deleteFeedback.clear();
+                    },
+                  })
                 }
-                disabled={submitting}
+                disabled={busyKey === `delete-product:${deletingProduct._id}`}
               >
-                {submitting ? "Deleting..." : "Delete"}
+                {busyKey === `delete-product:${deletingProduct._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `delete-product:${deletingProduct._id}` ? "Deleting..." : "Delete"}</span>
               </button>
             </>
           }

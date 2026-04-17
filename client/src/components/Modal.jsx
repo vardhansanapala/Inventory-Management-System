@@ -1,4 +1,4 @@
-export function Modal({ title, subtitle, children, onClose, actions = null }) {
+export function Modal({ title, subtitle, children, onClose, actions = null, feedback = null }) {
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <div className="modal app-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
@@ -11,10 +11,12 @@ export function Modal({ title, subtitle, children, onClose, actions = null }) {
             ×
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className="modal-body">
+          {feedback}
+          {children}
+        </div>
         {actions ? <div className="modal-actions">{actions}</div> : null}
       </div>
     </div>
   );
 }
-

@@ -54,6 +54,14 @@ function serializeAsset(asset) {
   };
 }
 
+function normalizeSearch(value) {
+  return String(value || "").trim();
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function listAssets(req, res) {
   const hasPaginationParams = req.query.page !== undefined || req.query.limit !== undefined;
   if (hasPaginationParams && req.user?.role !== "SUPER_ADMIN") {
@@ -72,15 +80,20 @@ async function listAssets(req, res) {
     filter.location = req.query.locationId;
   }
 
-  if (req.query.search) {
-    const regex = new RegExp(req.query.search.trim(), "i");
+  const search = normalizeSearch(req.query.search);
+
+  if (search) {
+    const escapedSearch = escapeRegex(search);
     const matchingProducts = await Product.find({
       isDeleted: false,
-      $or: [{ brand: regex }, { model: regex }],
-    }).select("_id");
+      sku: { $regex: escapedSearch, $options: "i" },
+    })
+      .select("_id")
+      .lean();
 
     filter.$or = [
-      { assetId: regex },
+      { assetId: { $regex: escapedSearch, $options: "i" } },
+      { serialNumber: { $regex: escapedSearch, $options: "i" } },
       ...(matchingProducts.length
         ? [{ product: { $in: matchingProducts.map((product) => product._id) } }]
         : []),

@@ -1,5 +1,3 @@
-import { buildScanUrl } from "./scan";
-
 export function getAssetId(asset) {
   return String(asset?.assetId || asset?.assetCode || "")
     .trim()
@@ -7,5 +5,5 @@ export function getAssetId(asset) {
 }
 
 export function getAssetScanUrl(asset) {
-  return String(asset?.qrCode || asset?.qrDeepLink || buildScanUrl(getAssetId(asset))).trim();
+  return String(asset?.qrCode || asset?.qrDeepLink || "").trim();
 }

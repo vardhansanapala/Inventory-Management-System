@@ -8,7 +8,6 @@ import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { LogsPage } from "./pages/LogsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { LoginPage } from "./pages/LoginPage";
-import { ScanPage } from "./pages/ScanPage";
 import { UsersPage } from "./pages/UsersPage";
 import { DeviceInfoPage } from "./pages/DeviceInfoPage";
 import { AssignDevicePage } from "./pages/AssignDevicePage";
@@ -26,8 +25,6 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/403" element={<ForbiddenPage />} />
-        <Route path="/scan" element={<ScanPage />} />
-        <Route path="/scan/:assetId" element={<ScanPage />} />
         <Route
           path="/"
           element={

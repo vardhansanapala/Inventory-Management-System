@@ -4,9 +4,20 @@ import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 
+const HISTORY_PREVIEW_COUNT = 5;
+
 function formatUser(user) {
   if (!user) return "-";
   return `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "-";
+}
+
+function formatActionLabel(action) {
+  return String(action || "")
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatTimestamp(value) {
@@ -16,14 +27,59 @@ function formatTimestamp(value) {
   return date.toLocaleString();
 }
 
-function HistoryEvent({ event }) {
+function sortHistoryEntries(history = []) {
+  return [...history].sort((left, right) => {
+    const leftTime = new Date(left?.timestamp || 0).getTime();
+    const rightTime = new Date(right?.timestamp || 0).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+function buildChangeRows(event) {
+  const rows = [];
+
+  if (event.from?.status || event.to?.status) {
+    rows.push({
+      label: "Status",
+      from: event.from?.status || "-",
+      to: event.to?.status || "-",
+    });
+  }
+
+  if (event.fromLocation || event.toLocation) {
+    rows.push({
+      label: "Location",
+      from: event.fromLocation?.name || "-",
+      to: event.toLocation?.name || "-",
+    });
+  }
+
+  if (event.fromAssignee || event.toAssignee) {
+    rows.push({
+      label: "Assignee",
+      from: formatUser(event.fromAssignee),
+      to: formatUser(event.toAssignee),
+    });
+  }
+
+  return rows;
+}
+
+function HistoryEvent({ event, isLatest = false }) {
+  const changes = buildChangeRows(event);
+
   return (
-    <div className="device-info-timeline-card">
+    <article className={`device-info-history-item${isLatest ? " is-latest" : ""}`}>
       <div className="device-info-timeline-header">
-        <strong className="device-info-timeline-type">{event.type}</strong>
+        <div className="device-info-history-heading">
+          <strong className="device-info-timeline-type">{event.type}</strong>
+          <strong className="device-info-history-action">{formatActionLabel(event.action) || event.type}</strong>
+          {isLatest ? <span className="device-info-history-latest">Latest action</span> : null}
+        </div>
         <span className="table-subtle">{formatTimestamp(event.timestamp)}</span>
       </div>
-      <div className="device-info-timeline-body">
+
+      <div className="device-info-history-meta">
         <div className="device-info-kv">
           <span>User</span>
           <strong>{formatUser(event.user)}</strong>
@@ -40,32 +96,24 @@ function HistoryEvent({ event }) {
             <strong>{event.description}</strong>
           </div>
         ) : null}
-        {event.fromAssignee || event.toAssignee ? (
-          <div className="device-info-kv">
-            <span>Assignee</span>
-            <strong>
-              {formatUser(event.fromAssignee)} → {formatUser(event.toAssignee)}
-            </strong>
-          </div>
-        ) : null}
-        {event.fromLocation || event.toLocation ? (
-          <div className="device-info-kv">
-            <span>Location</span>
-            <strong>
-              {event.fromLocation?.name || "-"} → {event.toLocation?.name || "-"}
-            </strong>
-          </div>
-        ) : null}
-        {event.from?.status || event.to?.status ? (
-          <div className="device-info-kv">
-            <span>Status</span>
-            <strong>
-              {event.from?.status || "-"} → {event.to?.status || "-"}
-            </strong>
-          </div>
-        ) : null}
       </div>
-    </div>
+
+      {changes.length ? (
+        <div className="device-info-history-changes">
+          <span className="device-info-history-section-label">Changes</span>
+          <div className="device-info-history-change-list">
+            {changes.map((change) => (
+              <div key={change.label} className="device-info-history-change-row">
+                <span>{change.label}</span>
+                <strong>
+                  {change.from} to {change.to}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -87,6 +135,7 @@ export function DeviceInfoPage() {
   const [selectedAssetId, setSelectedAssetId] = useState("");
   const [selectedAssetDetails, setSelectedAssetDetails] = useState(null);
   const [selectedAssetHistory, setSelectedAssetHistory] = useState([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const debounceRef = useRef(null);
   const previousSearchRef = useRef("");
@@ -110,6 +159,9 @@ export function DeviceInfoPage() {
     const safePage = Math.min(Math.max(page, 1), safeTotalPages);
     return `Page ${safePage} of ${safeTotalPages}`;
   }, [page, totalPages]);
+
+  const hasHiddenHistory = selectedAssetHistory.length > HISTORY_PREVIEW_COUNT;
+  const visibleHistory = historyExpanded ? selectedAssetHistory : selectedAssetHistory.slice(0, HISTORY_PREVIEW_COUNT);
 
   async function fetchAssets() {
     setLoading(true);
@@ -138,6 +190,7 @@ export function DeviceInfoPage() {
     setSelectedAssetId(assetId);
     setSelectedAssetDetails(null);
     setSelectedAssetHistory([]);
+    setHistoryExpanded(false);
     setDetailsOpen(true);
     setDetailsLoading(true);
     setError("");
@@ -145,7 +198,7 @@ export function DeviceInfoPage() {
     try {
       const result = await getAssetDetails(assetId);
       setSelectedAssetDetails(result?.asset || null);
-      setSelectedAssetHistory(Array.isArray(result?.history) ? result.history : []);
+      setSelectedAssetHistory(sortHistoryEntries(Array.isArray(result?.history) ? result.history : []));
     } catch (err) {
       setError(err.message || "Unable to load asset details.");
     } finally {
@@ -158,6 +211,7 @@ export function DeviceInfoPage() {
     setSelectedAssetId("");
     setSelectedAssetDetails(null);
     setSelectedAssetHistory([]);
+    setHistoryExpanded(false);
     setDetailsLoading(false);
   }
 
@@ -176,13 +230,13 @@ export function DeviceInfoPage() {
         <div className="device-info-toolbar">
           <input
             className="input"
-            placeholder="Search by SKU or serial number"
+            placeholder="Search by Asset Id or SKU or Serial Number"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
           />
           <div className="device-info-pagination">
             <span className="table-subtle">
-              {pageLabel} · {total} devices{loading ? " · Loading..." : ""}
+              {pageLabel} | {total} devices{loading ? " | Loading..." : ""}
             </span>
             <div className="inline-form">
               <button className="button ghost button-rect" type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={!canPrev}>
@@ -244,6 +298,7 @@ export function DeviceInfoPage() {
 
       {detailsOpen ? (
         <Modal
+          className="device-info-modal"
           title="Device Details"
           subtitle={selectedAssetDetails?.assetId ? `History for ${selectedAssetDetails.assetId}` : selectedAssetId ? `Loading ${selectedAssetId}...` : ""}
           onClose={closeDetails}
@@ -285,13 +340,36 @@ export function DeviceInfoPage() {
                 </div>
               </div>
 
-              <div className="device-info-panel">
-                <strong className="device-info-panel-title">History</strong>
+              <div className="device-info-panel device-info-history-panel">
+                <div className="device-info-history-panel-header">
+                  <div>
+                    <strong className="device-info-panel-title">History</strong>
+                    <div className="table-subtle">
+                      Showing {visibleHistory.length} of {selectedAssetHistory.length} records
+                    </div>
+                  </div>
+                  {hasHiddenHistory ? (
+                    <button
+                      className="button ghost button-rect button-sm"
+                      type="button"
+                      onClick={() => setHistoryExpanded((current) => !current)}
+                    >
+                      {historyExpanded ? "Show Less" : "Show Full History"}
+                    </button>
+                  ) : null}
+                </div>
+
                 {selectedAssetHistory.length ? (
-                  <div className="device-info-timeline">
-                    {selectedAssetHistory.map((event, idx) => (
-                      <HistoryEvent key={`${event.action || "event"}:${event.timestamp || idx}`} event={event} />
-                    ))}
+                  <div className="device-info-history-scroll">
+                    <div className="device-info-timeline">
+                      {visibleHistory.map((event, idx) => (
+                        <HistoryEvent
+                          key={`${event.action || "event"}:${event.timestamp || idx}`}
+                          event={event}
+                          isLatest={idx === 0}
+                        />
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="empty-state">No history found for this device.</div>

@@ -1,12 +1,12 @@
 const { isValidObjectId } = require("mongoose");
-const { ACTION_REASONS, ASSET_ACTIONS } = require("../constants/asset.constants");
+const { ACTION_REASONS, ASSET_ACTIONS, ASSET_STATUSES } = require("../constants/asset.constants");
 const { Asset } = require("../models/Asset");
 const { AuditLog } = require("../models/AuditLog");
 const { Location } = require("../models/Location");
 const { MaintenanceRecord } = require("../models/MaintenanceRecord");
 const { User } = require("../models/User");
 const { ApiError } = require("../utils/ApiError");
-const { buildTransition } = require("./assetState.service");
+const { buildTransition, resolveActionReason } = require("./assetState.service");
 
 async function findAssetForAction(assetIdentifier, session) {
   const normalizedIdentifier = String(assetIdentifier || "").trim().toUpperCase();
@@ -47,7 +47,7 @@ async function resolveActionRefs({ locationId, assignedToId, performedById, sess
   return { location, assignedTo, performedBy };
 }
 
-async function upsertMaintenanceIfNeeded(asset, action, payload, session) {
+async function upsertMaintenanceIfNeeded(asset, action, payload, session, fromStatus) {
   if (action === ASSET_ACTIONS.SEND_FOR_REPAIR) {
     const [record] = await MaintenanceRecord.create(
       [
@@ -67,7 +67,7 @@ async function upsertMaintenanceIfNeeded(asset, action, payload, session) {
     return record;
   }
 
-  if (action === ASSET_ACTIONS.COMPLETE_REPAIR) {
+  if (action === ASSET_ACTIONS.RETURN_DEVICE && fromStatus === ASSET_STATUSES.UNDER_REPAIR) {
     const record = await MaintenanceRecord.findOne({
       asset: asset._id,
       status: "IN_REPAIR",
@@ -122,6 +122,7 @@ async function applyAssetAction({
   });
 
   const fromStatus = asset.status;
+  const normalizedReason = resolveActionReason(action, reason);
   const fromLocation = asset.location;
   const fromAssignee = asset.assignedTo;
   const transition = buildTransition({
@@ -129,7 +130,7 @@ async function applyAssetAction({
     action,
     refs,
     payload,
-    reason,
+    reason: normalizedReason,
   });
 
   asset.status = transition.status;
@@ -142,7 +143,7 @@ async function applyAssetAction({
   asset.lastActionAt = new Date();
   await asset.save({ session });
 
-  const maintenanceRecord = await upsertMaintenanceIfNeeded(asset, action, payload, session);
+  const maintenanceRecord = await upsertMaintenanceIfNeeded(asset, action, payload, session, fromStatus);
 
   const [auditLog] = await AuditLog.create(
     [
@@ -150,7 +151,7 @@ async function applyAssetAction({
         asset: asset._id,
         assetId: asset.assetId,
         action,
-        reason,
+        reason: normalizedReason,
         customReason,
         performedBy: performedById,
         source,

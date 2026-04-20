@@ -44,6 +44,24 @@ const emptyEditForm = {
   status: USER_STATUSES.ACTIVE,
 };
 
+const PERMISSION_GROUPS = [
+  {
+    title: "User",
+    subtitle: "Account lifecycle and credential access",
+    permissions: [PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD],
+  },
+  {
+    title: "Asset",
+    subtitle: "Registry, updates, and assignments",
+    permissions: [PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET],
+  },
+  {
+    title: "Product",
+    subtitle: "SKU and catalog management",
+    permissions: [PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT],
+  },
+];
+
 function getPasswordErrors(password, confirmPassword) {
   const errors = {};
 
@@ -85,6 +103,68 @@ function PasswordField({ label, value, onChange, visible, onToggle, error, autoC
   );
 }
 
+function formatTimestamp(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
+}
+
+function PermissionGroupGrid({ selectedPermissions, onTogglePermission, onResetDefaults, resetLabel = "Reset to role defaults" }) {
+  return (
+    <>
+      <div className="users-permission-grid">
+        {PERMISSION_GROUPS.map((group) => (
+          <div key={group.title} className="users-permission-box">
+            <div className="users-permission-box-title">{group.title}</div>
+            <div className="table-subtle">{group.subtitle}</div>
+            <div className="users-permission-checks">
+              {group.permissions.map((perm) => (
+                <label key={perm} className="checkbox-label">
+                  <input type="checkbox" checked={selectedPermissions.includes(perm)} onChange={(event) => onTogglePermission(perm, event.target.checked)} />
+                  {perm}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="inline-form">
+        <button className="button ghost" type="button" onClick={onResetDefaults}>
+          {resetLabel}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function EditPermissionSections({ selectedPermissions, onTogglePermission, onResetDefaults }) {
+  return (
+    <div className="users-edit-perm-panel">
+      <div className="users-edit-perm-scroll">
+        {PERMISSION_GROUPS.map((group) => (
+          <section key={group.title} className="users-edit-perm-group" aria-label={group.title}>
+            <h3 className="users-edit-perm-group-title">{group.title.toUpperCase()}</h3>
+            <div className="users-edit-perm-checks">
+              {group.permissions.map((perm) => (
+                <label key={perm} className="checkbox-label users-edit-perm-check">
+                  <input type="checkbox" checked={selectedPermissions.includes(perm)} onChange={(event) => onTogglePermission(perm, event.target.checked)} />
+                  {perm}
+                </label>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      <footer className="users-edit-perm-footer">
+        <button className="button ghost" type="button" onClick={onResetDefaults}>
+          Reset to role defaults
+        </button>
+      </footer>
+    </div>
+  );
+}
+
 export function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -111,6 +191,7 @@ export function UsersPage() {
   const [editForm, setEditForm] = useState(emptyEditForm);
   const [editManageableRoles, setEditManageableRoles] = useState([]);
   const [editPermissions, setEditPermissions] = useState([]);
+  const [isPermissionsOpen, setIsPermissionsOpen] = useState(false);
 
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [passwordForm, setPasswordForm] = useState(emptyPasswordForm);
@@ -166,6 +247,12 @@ export function UsersPage() {
   useEffect(() => () => {
     window.clearTimeout(rowFlashTimeoutRef.current);
   }, []);
+
+  useEffect(() => {
+    if (editingUser) {
+      setIsPermissionsOpen(false);
+    }
+  }, [editingUser?._id]);
 
   function flashUserRow(userId) {
     if (!userId) return;
@@ -371,6 +458,20 @@ export function UsersPage() {
     setShowCreateConfirm(true);
   }
 
+  function toggleCreatePermission(permission, checked) {
+    setCreatePermissions((current) => {
+      if (checked) return Array.from(new Set([...current, permission]));
+      return current.filter((value) => value !== permission);
+    });
+  }
+
+  function toggleEditPermission(permission, checked) {
+    setEditPermissions((current) => {
+      if (checked) return Array.from(new Set([...current, permission]));
+      return current.filter((value) => value !== permission);
+    });
+  }
+
   const roleOptions = [ROLES.ADMIN, ROLES.EMPLOYEE];
 
   if (loading) {
@@ -512,83 +613,11 @@ export function UsersPage() {
                   <span className="table-subtle">Fine-grained access overrides</span>
                 </div>
                 <div className="users-form-card-body">
-                  <div className="users-permission-grid">
-                    <div className="users-permission-box">
-                      <div className="users-permission-box-title">USER MANAGEMENT</div>
-                      <div className="users-permission-checks">
-                        {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
-                          <label key={perm} className="checkbox-label">
-                            <input
-                              type="checkbox"
-                              checked={createPermissions.includes(perm)}
-                              onChange={(event) => {
-                                const checked = event.target.checked;
-                                setCreatePermissions((current) => {
-                                  if (checked) return Array.from(new Set([...current, perm]));
-                                  return current.filter((p) => p !== perm);
-                                });
-                              }}
-                            />
-                            {perm}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="users-permission-box">
-                      <div className="users-permission-box-title">ASSET MANAGEMENT</div>
-                      <div className="users-permission-checks">
-                        {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
-                          <label key={perm} className="checkbox-label">
-                            <input
-                              type="checkbox"
-                              checked={createPermissions.includes(perm)}
-                              onChange={(event) => {
-                                const checked = event.target.checked;
-                                setCreatePermissions((current) => {
-                                  if (checked) return Array.from(new Set([...current, perm]));
-                                  return current.filter((p) => p !== perm);
-                                });
-                              }}
-                            />
-                            {perm}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="users-permission-box">
-                      <div className="users-permission-box-title">PRODUCT / SKU</div>
-                      <div className="users-permission-checks">
-                        {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
-                          <label key={perm} className="checkbox-label">
-                            <input
-                              type="checkbox"
-                              checked={createPermissions.includes(perm)}
-                              onChange={(event) => {
-                                const checked = event.target.checked;
-                                setCreatePermissions((current) => {
-                                  if (checked) return Array.from(new Set([...current, perm]));
-                                  return current.filter((p) => p !== perm);
-                                });
-                              }}
-                            />
-                            {perm}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="inline-form">
-                    <button
-                      className="button ghost"
-                      type="button"
-                      onClick={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
-                    >
-                      Reset to role defaults
-                    </button>
-                  </div>
+                  <PermissionGroupGrid
+                    selectedPermissions={createPermissions}
+                    onTogglePermission={toggleCreatePermission}
+                    onResetDefaults={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
+                  />
                 </div>
               </div>
             ) : null}
@@ -650,6 +679,7 @@ export function UsersPage() {
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>Last Updated</th>
                 {canSeeUserActions ? <th>Actions</th> : null}
               </tr>
             </thead>
@@ -657,8 +687,10 @@ export function UsersPage() {
               {users.length ? (
                 users.map((targetUser) => {
                   const isSelf = String(targetUser._id) === String(currentUser?._id);
+                  const isLockedSuperAdmin = targetUser.role === ROLES.SUPER_ADMIN;
                   const canPauseResume = !isSelf;
-                  const canDelete = !isSelf;
+                  const canDelete = !isSelf && !isLockedSuperAdmin;
+                  const canEditTarget = !isLockedSuperAdmin;
 
                   return (
                     <tr key={targetUser._id} className={highlightedUserId === targetUser._id ? "row-flash" : ""}>
@@ -666,13 +698,21 @@ export function UsersPage() {
                         <strong>
                           {targetUser.firstName} {targetUser.lastName}
                         </strong>
+                        <div className="table-subtle">{isLockedSuperAdmin ? "Locked super admin account" : targetUser.employeeCode || "No employee code"}</div>
                       </td>
                       <td>{targetUser.email}</td>
-                      <td>{targetUser.role}</td>
+                      <td>
+                        <strong>{targetUser.role}</strong>
+                        {isLockedSuperAdmin ? <div className="table-subtle">Edit and delete are disabled</div> : null}
+                      </td>
                       <td>
                         <span className={`user-status-badge ${targetUser.status === USER_STATUSES.PAUSED ? "is-paused" : "is-active"}`}>
                           {targetUser.status || USER_STATUSES.ACTIVE}
                         </span>
+                      </td>
+                      <td>
+                        <strong>{formatTimestamp(targetUser.updatedAt)}</strong>
+                        <div className="table-subtle">Created {formatTimestamp(targetUser.createdAt)}</div>
                       </td>
                       {canSeeUserActions ? (
                         <td>
@@ -684,7 +724,7 @@ export function UsersPage() {
                                 id: "edit",
                                 label: "Edit User",
                                 icon: "✏️",
-                                hidden: !canEditUser,
+                                hidden: !canEditUser || !canEditTarget,
                                 onClick: () => openEditModal(targetUser),
                               },
                               {
@@ -735,7 +775,7 @@ export function UsersPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={canSeeUserActions ? 5 : 4}>No users found.</td>
+                  <td colSpan={canSeeUserActions ? 6 : 5}>No users found.</td>
                 </tr>
               )}
             </tbody>
@@ -745,8 +785,9 @@ export function UsersPage() {
 
       {editingUser ? (
         <Modal
+          className="users-edit-modal"
           title="Edit User"
-          subtitle={`Email is fixed for ${editingUser.email}`}
+          subtitle={`Email is fixed for ${editingUser.email} | Last updated ${formatTimestamp(editingUser.updatedAt)}`}
           onClose={() => setEditingUser(null)}
           feedback={
             <ActionFeedback
@@ -769,128 +810,84 @@ export function UsersPage() {
             </>
           }
         >
-          <div className="form-grid">
-            <label className="field-stack">
-              <span>First Name</span>
-              <input
-                className="input"
-                value={editForm.firstName}
-                onChange={(event) => setEditForm({ ...editForm, firstName: event.target.value })}
-              />
-            </label>
-            <label className="field-stack">
-              <span>Last Name</span>
-              <input
-                className="input"
-                value={editForm.lastName}
-                onChange={(event) => setEditForm({ ...editForm, lastName: event.target.value })}
-              />
-            </label>
-            <label className="field-stack">
-              <span>Role</span>
-              <select className="input" value={editForm.role} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
-                {roleOptions.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
-              <div className="field-stack">
-                <span>Manageable Roles</span>
-                <div className="mini-list">
-                  {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
-                    <label key={role} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={editManageableRoles.includes(role)}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setEditManageableRoles((current) => {
-                            if (checked) return Array.from(new Set([...current, role]));
-                            return current.filter((r) => r !== role);
-                          });
-                        }}
-                        disabled={role === ROLES.SUPER_ADMIN}
-                      />
+          <div className="users-edit-stack">
+            <div className="users-edit-fields">
+              <label className="field-stack">
+                <span>First Name</span>
+                <input
+                  className="input"
+                  value={editForm.firstName}
+                  onChange={(event) => setEditForm({ ...editForm, firstName: event.target.value })}
+                />
+              </label>
+              <label className="field-stack">
+                <span>Last Name</span>
+                <input
+                  className="input"
+                  value={editForm.lastName}
+                  onChange={(event) => setEditForm({ ...editForm, lastName: event.target.value })}
+                />
+              </label>
+              <label className="field-stack">
+                <span>Role</span>
+                <select className="input" value={editForm.role} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
+                  {roleOptions.map((role) => (
+                    <option key={role} value={role}>
                       {role}
-                    </label>
+                    </option>
                   ))}
+                </select>
+              </label>
+              {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
+                <div className="field-stack users-edit-section">
+                  <span>Manageable Roles</span>
+                  <div className="mini-list users-manageable-list">
+                    {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
+                      <label key={role} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={editManageableRoles.includes(role)}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setEditManageableRoles((current) => {
+                              if (checked) return Array.from(new Set([...current, role]));
+                              return current.filter((r) => r !== role);
+                            });
+                          }}
+                          disabled={role === ROLES.SUPER_ADMIN}
+                        />
+                        {role}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
             {isSuperAdmin ? (
-              <div className="field-stack users-permissions">
-                <span>Permissions</span>
-                <div className="permission-groups">
-                  <div className="permission-group">
-                    <strong className="table-subtle">USER MANAGEMENT</strong>
-                    {[PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD].map((perm) => (
-                      <label key={perm} className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={editPermissions.includes(perm)}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setEditPermissions((current) => {
-                              if (checked) return Array.from(new Set([...current, perm]));
-                              return current.filter((p) => p !== perm);
-                            });
-                          }}
-                        />
-                        {perm}
-                      </label>
-                    ))}
-                  </div>
-                  <div className="permission-group">
-                    <strong className="table-subtle">ASSET MANAGEMENT</strong>
-                    {[PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET].map((perm) => (
-                      <label key={perm} className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={editPermissions.includes(perm)}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setEditPermissions((current) => {
-                              if (checked) return Array.from(new Set([...current, perm]));
-                              return current.filter((p) => p !== perm);
-                            });
-                          }}
-                        />
-                        {perm}
-                      </label>
-                    ))}
-                  </div>
-                  <div className="permission-group">
-                    <strong className="table-subtle">PRODUCT / SKU</strong>
-                    {[PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT].map((perm) => (
-                      <label key={perm} className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={editPermissions.includes(perm)}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setEditPermissions((current) => {
-                              if (checked) return Array.from(new Set([...current, perm]));
-                              return current.filter((p) => p !== perm);
-                            });
-                          }}
-                        />
-                        {perm}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div className="inline-form">
-                  <button
-                    className="button ghost"
-                    type="button"
-                    onClick={() => setEditPermissions(ROLE_DEFAULTS[editForm.role]?.permissions || [])}
+              <div className="users-edit-perm-field">
+                <button
+                  type="button"
+                  className="users-edit-perm-accordion-trigger"
+                  aria-expanded={isPermissionsOpen}
+                  onClick={() => setIsPermissionsOpen((open) => !open)}
+                >
+                  <span className="users-edit-perm-accordion-title">Permissions</span>
+                  <span
+                    className={`users-edit-perm-accordion-arrow${isPermissionsOpen ? " is-open" : ""}`}
+                    aria-hidden
                   >
-                    Reset to role defaults
-                  </button>
-                </div>
+                    ▶
+                  </span>
+                </button>
+                {isPermissionsOpen ? (
+                  <div className="users-edit-perm-content">
+                    <EditPermissionSections
+                      selectedPermissions={editPermissions}
+                      onTogglePermission={toggleEditPermission}
+                      onResetDefaults={() => setEditPermissions(ROLE_DEFAULTS[editForm.role]?.permissions || [])}
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
             <label className="field-stack">

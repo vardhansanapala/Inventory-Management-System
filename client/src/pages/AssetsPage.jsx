@@ -21,6 +21,7 @@ import { StatusPill } from "../components/StatusPill";
 import {
   ASSET_ACTIONS,
   ASSET_STATUSES,
+  getNextStatusForAction,
   getReasonOptions,
   getValidActionsForStatus,
 } from "../constants/assetWorkflow";
@@ -167,6 +168,114 @@ const emptySetupData = {
   users: [],
 };
 
+const DEFAULT_ACTION_FORM = {
+  action: ASSET_ACTIONS.ASSIGN_DEVICE,
+  reason: "OTHER",
+  customReason: "",
+  locationId: "",
+  assignedToId: "",
+  notes: "",
+  issue: "",
+  vendor: "",
+  cost: "",
+  customerName: "",
+  customerContact: "",
+  rentalStartDate: "",
+  rentalEndDate: "",
+  rentalCost: "",
+  buyerName: "",
+  salePrice: "",
+  invoiceNumber: "",
+  saleDate: "",
+};
+
+function getActionFieldVisibility(action) {
+  return {
+    requiresAssignee: action === ASSET_ACTIONS.ASSIGN_DEVICE,
+    requiresLocation: action === ASSET_ACTIONS.SEND_OUTSIDE || action === ASSET_ACTIONS.TRANSFER,
+    isRepair: action === ASSET_ACTIONS.SEND_FOR_REPAIR,
+    isRental: action === ASSET_ACTIONS.RENT_DEVICE,
+    isSale: action === ASSET_ACTIONS.SELL_DEVICE,
+  };
+}
+
+function resetActionFormForAction(currentForm, action, status) {
+  const nextReasonOptions = getReasonOptions(action, status);
+  const nextReason = nextReasonOptions.includes(currentForm.reason) ? currentForm.reason : nextReasonOptions[0] || "OTHER";
+  const visibility = getActionFieldVisibility(action);
+
+  return {
+    ...DEFAULT_ACTION_FORM,
+    ...currentForm,
+    action,
+    reason: nextReason,
+    assignedToId: visibility.requiresAssignee ? currentForm.assignedToId : "",
+    locationId: visibility.requiresLocation ? currentForm.locationId : "",
+    issue: visibility.isRepair ? currentForm.issue : "",
+    vendor: visibility.isRepair ? currentForm.vendor : "",
+    cost: visibility.isRepair ? currentForm.cost : "",
+    customerName: visibility.isRental ? currentForm.customerName : "",
+    customerContact: visibility.isRental ? currentForm.customerContact : "",
+    rentalStartDate: visibility.isRental ? currentForm.rentalStartDate : "",
+    rentalEndDate: visibility.isRental ? currentForm.rentalEndDate : "",
+    rentalCost: visibility.isRental ? currentForm.rentalCost : "",
+    buyerName: visibility.isSale ? currentForm.buyerName : "",
+    salePrice: visibility.isSale ? currentForm.salePrice : "",
+    invoiceNumber: visibility.isSale ? currentForm.invoiceNumber : "",
+    saleDate: visibility.isSale ? currentForm.saleDate : "",
+  };
+}
+
+function getActionValidationError(form, selectedAsset) {
+  if (!selectedAsset) {
+    return "Select a device first. The action form only works on the selected device.";
+  }
+
+  const visibility = getActionFieldVisibility(form.action);
+
+  if (visibility.requiresAssignee && !form.assignedToId) {
+    return "Select an assignee before assigning the device.";
+  }
+
+  if (visibility.requiresLocation && !form.locationId) {
+    return form.action === ASSET_ACTIONS.TRANSFER
+      ? "Select the destination location before transferring the device."
+      : "Select a location before sending the device outside.";
+  }
+
+  if (
+    form.action === ASSET_ACTIONS.TRANSFER &&
+    selectedAsset?.location?._id &&
+    String(form.locationId) === String(selectedAsset.location._id)
+  ) {
+    return "Choose a different destination location for the transfer.";
+  }
+
+  if (visibility.isRepair) {
+    if (!String(form.issue || "").trim()) return "Enter the repair issue before submitting.";
+    if (!String(form.vendor || "").trim()) return "Enter the repair vendor before submitting.";
+    if (form.cost === "" || Number.isNaN(Number(form.cost)) || Number(form.cost) < 0) return "Enter a valid repair cost before submitting.";
+  }
+
+  if (visibility.isRental) {
+    if (!String(form.customerName || "").trim()) return "Enter the rental customer before submitting.";
+    if (!String(form.customerContact || "").trim()) return "Enter the rental contact before submitting.";
+    if (!form.rentalStartDate) return "Enter the rental start date before submitting.";
+    if (!form.rentalEndDate) return "Enter the rental end date before submitting.";
+    if (new Date(form.rentalEndDate) < new Date(form.rentalStartDate)) return "Rental end date must be on or after the start date.";
+    if (form.rentalCost === "" || Number.isNaN(Number(form.rentalCost)) || Number(form.rentalCost) < 0) return "Enter a valid rental cost before submitting.";
+  }
+
+  if (visibility.isSale) {
+    if (!String(form.buyerName || "").trim()) return "Enter the buyer before submitting.";
+    if (form.salePrice === "" || Number.isNaN(Number(form.salePrice)) || Number(form.salePrice) < 0) return "Enter a valid sale price before submitting.";
+    if (!String(form.invoiceNumber || "").trim()) return "Enter the invoice number before submitting.";
+    if (!form.saleDate) return "Enter the sale date before submitting.";
+  }
+
+  return "";
+}
+
 export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
@@ -232,23 +341,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const createFeedback = useActionFeedback({ preferGlobal: true });
   const workflowFeedback = useActionFeedback();
   const modalFeedback = useActionFeedback();
-  const [actionForm, setActionForm] = useState({
-    action: ASSET_ACTIONS.ASSIGN_DEVICE,
-    reason: "OTHER",
-    customReason: "",
-    locationId: "",
-    assignedToId: "",
-    notes: "",
-    issue: "",
-    vendor: "",
-    cost: "",
-    externalRecipient: "",
-  });
+  const [actionForm, setActionForm] = useState(DEFAULT_ACTION_FORM);
   const validActionOptions = getValidActionsForStatus(selectedAsset?.status);
   const reasonOptions = getReasonOptions(actionForm.action, selectedAsset?.status);
-  const selectedAssetRequiresExternalRecipient =
-    selectedAsset?.status === ASSET_STATUSES.AVAILABLE && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE;
-  const selectedAssetRequiresAssignee = actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE;
+  const actionFieldVisibility = getActionFieldVisibility(actionForm.action);
+  const selectedAssetRequiresAssignee = actionFieldVisibility.requiresAssignee;
+  const selectedAssetRequiresLocation = actionFieldVisibility.requiresLocation;
+  const selectedAssetIsRepairAction = actionFieldVisibility.isRepair;
+  const selectedAssetIsRentalAction = actionFieldVisibility.isRental;
+  const selectedAssetIsSaleAction = actionFieldVisibility.isSale;
+  const actionValidationError = getActionValidationError(actionForm, selectedAsset);
+  const isActionFormValid = !actionValidationError && validActionOptions.includes(actionForm.action);
+  const currentActionLocationId = selectedAsset?.location?._id ? String(selectedAsset.location._id) : "";
+  const targetActionLocation =
+    selectedAssetRequiresLocation && actionForm.locationId
+      ? setupData.locations.find((location) => String(location._id) === String(actionForm.locationId)) || null
+      : null;
 
   const selectedAssetScanUrl = useMemo(() => getAssetScanUrl(selectedAsset), [selectedAsset]);
   const createdAssetScanUrl = useMemo(() => getAssetScanUrl(latestCreatedAsset), [latestCreatedAsset]);
@@ -432,26 +540,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   }
 
   function getOptimisticNextStatus(currentStatus, action) {
-    switch (action) {
-      case ASSET_ACTIONS.ASSIGN_DEVICE:
-        return ASSET_STATUSES.ASSIGNED;
-      case ASSET_ACTIONS.UNASSIGN_DEVICE:
-        return ASSET_STATUSES.AVAILABLE;
-      case ASSET_ACTIONS.SEND_OUTSIDE:
-        return ASSET_STATUSES.OUTSIDE;
-      case ASSET_ACTIONS.RETURN_DEVICE:
-        return ASSET_STATUSES.AVAILABLE;
-      case ASSET_ACTIONS.SEND_FOR_REPAIR:
-        return ASSET_STATUSES.UNDER_REPAIR;
-      case ASSET_ACTIONS.COMPLETE_REPAIR:
-        return ASSET_STATUSES.AVAILABLE;
-      case ASSET_ACTIONS.SELL_DEVICE:
-        return ASSET_STATUSES.SOLD;
-      case ASSET_ACTIONS.MARK_LOST:
-        return ASSET_STATUSES.LOST;
-      default:
-        return currentStatus;
-    }
+    return getNextStatusForAction(currentStatus, action);
   }
 
   async function handleRegenerateQr(asset, target) {
@@ -681,7 +770,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
         previousSearchRef.current = nextSearch;
         setSearch(nextSearch);
       }
-    }, 400);
+    }, 300);
 
     return () => window.clearTimeout(searchDebounceRef.current);
   }, [searchInput]);
@@ -760,21 +849,9 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
     setActionForm((current) => {
       const nextAction = nextValidActions.includes(current.action) ? current.action : nextValidActions[0] || "";
-      const nextReasonOptions = getReasonOptions(nextAction, selectedAsset?.status);
-      const nextReason = nextReasonOptions.includes(current.reason) ? current.reason : nextReasonOptions[0] || "OTHER";
-
-      return {
-        ...current,
-        action: nextAction,
-        reason: nextReason,
-        assignedToId: nextAction === ASSET_ACTIONS.ASSIGN_DEVICE ? current.assignedToId : "",
-        externalRecipient:
-          selectedAsset?.status === ASSET_STATUSES.AVAILABLE && nextAction === ASSET_ACTIONS.SEND_OUTSIDE
-            ? current.externalRecipient
-            : "",
-      };
+      return resetActionFormForAction(current, nextAction, selectedAsset?.status);
     });
-  }, [selectedAsset?.status]);
+  }, [selectedAsset?._id, selectedAsset?.status]);
 
   useEffect(() => {
     return () => {
@@ -849,24 +926,16 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
   function handleActionChange(event) {
     const { name, value } = event.target;
-
     setActionForm((current) => {
-      const nextForm = { ...current, [name]: value };
-
       if (name === "action") {
-        const nextReasonOptions = getReasonOptions(value, selectedAsset?.status);
-        nextForm.reason = nextReasonOptions.includes(current.reason) ? current.reason : nextReasonOptions[0] || "OTHER";
-
-        if (value !== ASSET_ACTIONS.ASSIGN_DEVICE) {
-          nextForm.assignedToId = "";
-        }
-
-        if (!(selectedAsset?.status === ASSET_STATUSES.AVAILABLE && value === ASSET_ACTIONS.SEND_OUTSIDE)) {
-          nextForm.externalRecipient = "";
-        }
+        return resetActionFormForAction(current, value, selectedAsset?.status);
       }
 
-      return nextForm;
+      if (name === "reason" && value !== "OTHER") {
+        return { ...current, reason: value, customReason: "" };
+      }
+
+      return { ...current, [name]: value };
     });
   }
 
@@ -926,13 +995,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       return;
     }
 
-    if (selectedAssetRequiresAssignee && !actionForm.assignedToId) {
-      workflowFeedback.showError("Select an assignee before assigning the device.");
-      return;
-    }
-
-    if (selectedAssetRequiresExternalRecipient && !actionForm.externalRecipient.trim()) {
-      workflowFeedback.showError("Enter an external recipient before sending an available device outside.");
+    if (actionValidationError) {
+      workflowFeedback.showError(actionValidationError);
       return;
     }
 
@@ -945,11 +1009,16 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     const optimisticAssignee =
       selectedAssetRequiresAssignee && actionForm.assignedToId
         ? setupData.users.find((u) => String(u._id) === String(actionForm.assignedToId)) || null
-        : actionForm.action === ASSET_ACTIONS.UNASSIGN_DEVICE
+        : actionForm.action === ASSET_ACTIONS.RETURN_DEVICE ||
+            actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ||
+            actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ||
+            actionForm.action === ASSET_ACTIONS.RENT_DEVICE ||
+            actionForm.action === ASSET_ACTIONS.SELL_DEVICE ||
+            actionForm.action === ASSET_ACTIONS.MARK_LOST
           ? null
           : previousSelected?.assignedTo || null;
     const optimisticLocation =
-      actionForm.locationId
+      selectedAssetRequiresLocation && actionForm.locationId
         ? setupData.locations.find((l) => String(l._id) === String(actionForm.locationId)) || previousSelected?.location || null
         : previousSelected?.location || null;
 
@@ -980,10 +1049,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     try {
       const result = await performAssetAction(selectedAssetId, {
         ...actionForm,
-        locationId: actionForm.locationId || null,
+        customReason: actionForm.reason === "OTHER" ? actionForm.customReason.trim() : "",
+        locationId: selectedAssetRequiresLocation ? actionForm.locationId || null : null,
+        toLocationId: actionForm.action === ASSET_ACTIONS.TRANSFER ? actionForm.locationId || null : null,
         assignedToId: selectedAssetRequiresAssignee ? actionForm.assignedToId || null : null,
-        externalRecipient: selectedAssetRequiresExternalRecipient ? actionForm.externalRecipient.trim() : null,
-        cost: actionForm.cost ? Number(actionForm.cost) : null,
+        cost: actionForm.cost === "" ? null : Number(actionForm.cost),
+        rentalCost: actionForm.rentalCost === "" ? null : Number(actionForm.rentalCost),
+        salePrice: actionForm.salePrice === "" ? null : Number(actionForm.salePrice),
       });
 
       setSelectedAsset(result.asset);
@@ -1293,6 +1365,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
                     {!selectedAsset ? <div className="action-hint">Choose a device first. Actions apply only to the selected device.</div> : null}
                     {selectedAsset && !validActionOptions.length ? <div className="action-hint">No transitions are available for the current status.</div> : null}
+                    {selectedAsset && validActionOptions.length && actionValidationError ? <div className="action-hint">{actionValidationError}</div> : null}
 
                     <select className="input" name="action" value={actionForm.action} onChange={handleActionChange} required>
                       {validActionOptions.length ? validActionOptions.map((action) => <option key={action} value={action}>{action}</option>) : <option value="">No valid actions</option>}
@@ -1300,31 +1373,79 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     <select className="input" name="reason" value={actionForm.reason} onChange={handleActionChange} required>
                       {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
                     </select>
-                    <input className="input" name="customReason" placeholder="Custom reason" value={actionForm.customReason} onChange={handleActionChange} />
-                    <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange}>
-                      <option value="">Target Location</option>
-                      {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
-                    </select>
+                    {actionForm.reason === "OTHER" ? (
+                      <input className="input" name="customReason" placeholder="Custom reason" value={actionForm.customReason} onChange={handleActionChange} />
+                    ) : null}
+                    {actionForm.action === ASSET_ACTIONS.TRANSFER ? (
+                      <div className="action-location-preview">
+                        <div className="action-location-box">
+                          <span>Current Location</span>
+                          <strong>{selectedAsset?.location?.name || "-"}</strong>
+                        </div>
+                        <div className="action-location-arrow" aria-hidden>
+                          to
+                        </div>
+                        <div className="action-location-box">
+                          <span>Target Location</span>
+                          <strong>{targetActionLocation?.name || "Select a destination"}</strong>
+                        </div>
+                      </div>
+                    ) : null}
+                    {selectedAssetRequiresLocation ? (
+                      <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange} required>
+                        <option value="">{actionForm.action === ASSET_ACTIONS.TRANSFER ? "To Location" : "Target Location"}</option>
+                        {setupData.locations
+                          .filter((location) => actionForm.action !== ASSET_ACTIONS.TRANSFER || String(location._id) !== currentActionLocationId)
+                          .map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
+                      </select>
+                    ) : null}
                     {selectedAssetRequiresAssignee ? (
                       <select className="input" name="assignedToId" value={actionForm.assignedToId} onChange={handleActionChange} required>
-                        <option value="">Target Assignee</option>
+                        <option value="">{actionForm.action === ASSET_ACTIONS.TRANSFER ? "Transfer To" : "Target Assignee"}</option>
                         {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
                       </select>
                     ) : null}
-                    {selectedAssetRequiresExternalRecipient ? (
-                      <input className="input" name="externalRecipient" placeholder="External Recipient" value={actionForm.externalRecipient} onChange={handleActionChange} required />
+                    {selectedAssetIsRepairAction ? (
+                      <input className="input" name="issue" placeholder="Issue" value={actionForm.issue} onChange={handleActionChange} required />
                     ) : null}
-                    {selectedAsset?.status === ASSET_STATUSES.ASSIGNED && actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ? (
-                      <div className="action-hint">This device is assigned, so SEND_OUTSIDE will keep the current assignee as the outside holder.</div>
+                    {selectedAssetIsRepairAction ? (
+                      <input className="input" name="vendor" placeholder="Vendor" value={actionForm.vendor} onChange={handleActionChange} required />
                     ) : null}
-                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="issue" placeholder="Issue (repair only)" value={actionForm.issue} onChange={handleActionChange} /> : null}
-                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" name="vendor" placeholder="Vendor (repair only)" value={actionForm.vendor} onChange={handleActionChange} /> : null}
-                    {actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ? <input className="input" type="number" name="cost" placeholder="Cost" value={actionForm.cost} onChange={handleActionChange} /> : null}
+                    {selectedAssetIsRepairAction ? (
+                      <input className="input" type="number" min="0" step="0.01" name="cost" placeholder="Repair Cost" value={actionForm.cost} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsRentalAction ? (
+                      <input className="input" name="customerName" placeholder="Customer" value={actionForm.customerName} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsRentalAction ? (
+                      <input className="input" name="customerContact" placeholder="Customer Contact" value={actionForm.customerContact} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsRentalAction ? (
+                      <input className="input" type="date" name="rentalStartDate" value={actionForm.rentalStartDate} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsRentalAction ? (
+                      <input className="input" type="date" name="rentalEndDate" value={actionForm.rentalEndDate} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsRentalAction ? (
+                      <input className="input" type="number" min="0" step="0.01" name="rentalCost" placeholder="Rental Cost" value={actionForm.rentalCost} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsSaleAction ? (
+                      <input className="input" name="buyerName" placeholder="Buyer" value={actionForm.buyerName} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsSaleAction ? (
+                      <input className="input" type="number" min="0" step="0.01" name="salePrice" placeholder="Sale Price" value={actionForm.salePrice} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsSaleAction ? (
+                      <input className="input" name="invoiceNumber" placeholder="Invoice Number" value={actionForm.invoiceNumber} onChange={handleActionChange} required />
+                    ) : null}
+                    {selectedAssetIsSaleAction ? (
+                      <input className="input" type="date" name="saleDate" value={actionForm.saleDate} onChange={handleActionChange} required />
+                    ) : null}
                     <textarea className="input textarea" name="notes" placeholder="Action notes" value={actionForm.notes} onChange={handleActionChange} />
                     <button
                       className="button dark button-rect with-spinner"
                       type="submit"
-                      disabled={!selectedAsset || !validActionOptions.length || actionSubmitting}
+                      disabled={!selectedAsset || !validActionOptions.length || actionSubmitting || !isActionFormValid}
                     >
                       {actionSubmitting ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
                       <span>{actionSubmitting ? "Applying..." : "Apply Action"}</span>

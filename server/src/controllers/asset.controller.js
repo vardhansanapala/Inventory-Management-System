@@ -13,6 +13,46 @@ const { applyAssetAction } = require("../services/assetAction.service");
 const { PERMISSIONS } = require("../constants/permissions");
 const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
 
+const MAX_TRANSACTION_RETRIES = 3;
+
+function isRetryableTransactionError(error) {
+  if (!error) return false;
+  if (typeof error.hasErrorLabel === "function") {
+    if (error.hasErrorLabel("TransientTransactionError") || error.hasErrorLabel("UnknownTransactionCommitResult")) {
+      return true;
+    }
+  }
+
+  const message = String(error.message || "");
+  return /writeconflict|transienttransactionerror|unknowntransactioncommitresult/i.test(message);
+}
+
+async function runAssetActionTransaction(work) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_RETRIES; attempt += 1) {
+    const session = await startSession();
+
+    try {
+      session.startTransaction();
+      const result = await work(session);
+      await session.commitTransaction();
+      return result;
+    } catch (error) {
+      lastError = error;
+      await session.abortTransaction();
+
+      if (!isRetryableTransactionError(error) || attempt === MAX_TRANSACTION_RETRIES) {
+        throw error;
+      }
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  throw lastError;
+}
+
 async function getAssetBootstrap(req, res) {
   const [products, locations, users] = await Promise.all([
     Product.find({ isDeleted: false }).populate("category").sort({ sku: 1 }),
@@ -154,8 +194,7 @@ async function getAssetDetails(req, res) {
     asset: asset._id,
     isDeleted: false,
   })
-    .sort({ createdAt: -1, _id: -1 })
-    .limit(250)
+    .sort({ timestamp: -1, createdAt: -1, _id: -1 })
     .populate("performedBy", "firstName lastName email")
     .populate("fromLocation toLocation", "name code")
     .populate("fromAssignee toAssignee", "firstName lastName email");
@@ -165,10 +204,12 @@ async function getAssetDetails(req, res) {
     const lower = action.toLowerCase();
 
     const isRepair = lower.includes("repair");
+    const isRental = lower.includes("rent");
+    const isSale = lower.includes("sell");
     const isOutside = lower.includes("outside") || action === "SEND_OUTSIDE" || action === "RETURN_DEVICE";
     const isAssign = lower.includes("assign");
 
-    const type = isRepair ? "REPAIR" : isOutside ? "OUTSIDE" : isAssign ? "ASSIGNED" : "EVENT";
+    const type = isRepair ? "REPAIR" : isRental ? "RENTAL" : isSale ? "SALE" : isOutside ? "OUTSIDE" : isAssign ? "ASSIGNED" : "EVENT";
 
     return {
       type,
@@ -185,7 +226,7 @@ async function getAssetDetails(req, res) {
       to: log.toStatus ? { status: log.toStatus } : null,
       reason: log.reason || null,
       description: log.notes || log.customReason || "",
-      timestamp: log.createdAt || log.timestamp,
+      timestamp: log.timestamp || log.createdAt,
       fromLocation: log.fromLocation ? { _id: log.fromLocation._id, name: log.fromLocation.name } : null,
       toLocation: log.toLocation ? { _id: log.toLocation._id, name: log.toLocation.name } : null,
       fromAssignee: log.fromAssignee
@@ -310,7 +351,7 @@ async function getAssetAuditLogs(req, res) {
     asset: asset._id,
     isDeleted: false,
   })
-    .sort({ createdAt: -1 })
+    .sort({ timestamp: -1, createdAt: -1, _id: -1 })
     .populate("performedBy", "firstName lastName email")
     .populate("fromLocation toLocation", "name code")
     .populate("fromAssignee toAssignee", "firstName lastName email");
@@ -375,68 +416,55 @@ async function performAssetAction(req, res) {
     throw new ApiError(400, "performedById is required");
   }
 
-  const session = await startSession();
-
-  try {
-    // This transaction is the core integrity boundary: the asset mutation and the
-    // audit log insert either both succeed or both roll back.
-    session.startTransaction();
-
-    const result = await applyAssetAction({
+  const result = await runAssetActionTransaction((session) =>
+    applyAssetAction({
       assetIdentifier: req.params.assetId,
       action: req.body.action,
       performedById,
       reason: req.body.reason || ACTION_REASONS.OTHER,
       customReason: req.body.customReason || "",
       notes: req.body.notes || "",
-      locationId: req.body.locationId || null,
+      locationId: req.body.locationId || req.body.toLocationId || null,
       assignedToId: req.body.assignedToId || null,
       clientActionId: req.body.clientActionId || null,
       source: "WEB",
       payload: req.body,
       session,
-    });
+    })
+  );
 
-    await session.commitTransaction();
-
-    if (result.duplicate) {
-      return res.status(200).json({
-        duplicate: true,
-        auditLogId: result.auditLog._id,
-      });
-    }
-
-    const asset = await Asset.findById(result.asset._id)
-      .populate("product")
-      .populate("location")
-      .populate("assignedTo", "firstName lastName email");
-
-    if (String(req.body.action || "") === "ASSIGN_DEVICE") {
-      await RbacAuditLog.create({
-        action: "ASSET_ASSIGNED",
-        performedBy: performedById,
-        targetId: asset._id,
-        targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
-        metadata: {
-          assetId: asset.assetId,
-          toAssigneeId: asset.assignedTo?._id || asset.assignedTo || null,
-          toLocationId: asset.location?._id || asset.location || null,
-          status: asset.status,
-        },
-      });
-    }
-
-    return res.json({
-      duplicate: false,
-      asset: serializeAsset(asset),
+  if (result.duplicate) {
+    return res.status(200).json({
+      duplicate: true,
       auditLogId: result.auditLog._id,
     });
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    await session.endSession();
   }
+
+  const asset = await Asset.findById(result.asset._id)
+    .populate("product")
+    .populate("location")
+    .populate("assignedTo", "firstName lastName email");
+
+  if (String(req.body.action || "") === "ASSIGN_DEVICE") {
+    await RbacAuditLog.create({
+      action: "ASSET_ASSIGNED",
+      performedBy: performedById,
+      targetId: asset._id,
+      targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+      metadata: {
+        assetId: asset.assetId,
+        toAssigneeId: asset.assignedTo?._id || asset.assignedTo || null,
+        toLocationId: asset.location?._id || asset.location || null,
+        status: asset.status,
+      },
+    });
+  }
+
+  return res.json({
+    duplicate: false,
+    asset: serializeAsset(asset),
+    auditLogId: result.auditLog._id,
+  });
 }
 
 async function updateAsset(req, res) {

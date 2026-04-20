@@ -3,6 +3,45 @@ const { ACTION_REASONS } = require("../constants/asset.constants");
 const { applyAssetAction } = require("../services/assetAction.service");
 const { ApiError } = require("../utils/ApiError");
 
+const MAX_TRANSACTION_RETRIES = 3;
+
+function isRetryableTransactionError(error) {
+  if (!error) return false;
+  if (typeof error.hasErrorLabel === "function") {
+    if (error.hasErrorLabel("TransientTransactionError") || error.hasErrorLabel("UnknownTransactionCommitResult")) {
+      return true;
+    }
+  }
+
+  return /writeconflict|transienttransactionerror|unknowntransactioncommitresult/i.test(String(error.message || ""));
+}
+
+async function runSyncActionTransaction(work) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_RETRIES; attempt += 1) {
+    const session = await startSession();
+
+    try {
+      session.startTransaction();
+      const result = await work(session);
+      await session.commitTransaction();
+      return result;
+    } catch (error) {
+      lastError = error;
+      await session.abortTransaction();
+
+      if (!isRetryableTransactionError(error) || attempt === MAX_TRANSACTION_RETRIES) {
+        throw error;
+      }
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  throw lastError;
+}
+
 async function syncOfflineActions(req, res) {
   const performedById = req.user?._id || req.body.performedById;
   if (!performedById) {
@@ -13,12 +52,9 @@ async function syncOfflineActions(req, res) {
   const results = [];
 
   for (const item of actions) {
-    const session = await startSession();
-
     try {
-      session.startTransaction();
-
-      const result = await applyAssetAction({
+      const result = await runSyncActionTransaction((session) =>
+        applyAssetAction({
         assetIdentifier: item.assetId || item.assetCode,
         action: item.action,
         performedById,
@@ -31,9 +67,8 @@ async function syncOfflineActions(req, res) {
         source: "MOBILE",
         payload: item,
         session,
-      });
-
-      await session.commitTransaction();
+        })
+      );
 
       results.push({
         clientActionId: item.clientActionId || null,
@@ -43,14 +78,11 @@ async function syncOfflineActions(req, res) {
         auditLogId: result.auditLog._id,
       });
     } catch (error) {
-      await session.abortTransaction();
       results.push({
         clientActionId: item.clientActionId || null,
         status: "failed",
         error: error.message,
       });
-    } finally {
-      await session.endSession();
     }
   }
 

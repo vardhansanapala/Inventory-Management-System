@@ -1,14 +1,27 @@
-export function Modal({ title, subtitle, children, onClose, actions = null, feedback = null }) {
+import { useEffect } from "react";
+
+export function Modal({ title, subtitle, children, onClose, actions = null, feedback = null, className = "" }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
-      <div className="modal app-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+      <div className={`modal app-modal ${className}`.trim()} onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-header">
           <div className="modal-header-text">
             <h2>{title}</h2>
             {subtitle ? <p className="table-subtle">{subtitle}</p> : null}
           </div>
           <button className="icon-action-button" type="button" onClick={onClose} aria-label="Close modal" title="Close">
-            ×
+            &times;
           </button>
         </div>
         <div className="modal-body">

@@ -48,6 +48,30 @@ function requireValidPassword(password, fieldName = "Password") {
   }
 }
 
+function buildUserSnapshot(user) {
+  return {
+    firstName: user.firstName,
+    lastName: user.lastName,
+    email: user.email,
+    role: user.role,
+    status: user.status,
+    permissions: Array.isArray(user.permissions) ? user.permissions.slice() : [],
+    manageableRoles: Array.isArray(user.manageableRoles) ? user.manageableRoles.slice() : [],
+  };
+}
+
+function buildFieldChange(label, before, after) {
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    return null;
+  }
+
+  return {
+    label,
+    before,
+    after,
+  };
+}
+
 async function ensureEmailAvailable(email, userIdToIgnore = null) {
   const query = { email, isDeleted: false };
   if (userIdToIgnore) {
@@ -143,9 +167,12 @@ async function createUser(req, res) {
     performedBy: actor._id,
     targetUserId: user._id,
     metadata: {
-      email: user.email,
-      role: user.role,
-      status: user.status,
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
+      after: buildUserSnapshot(user),
     },
   });
 
@@ -155,9 +182,17 @@ async function createUser(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
-      email: user.email,
-      role: user.role,
-      status: user.status,
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
+      changes: [
+        buildFieldChange("Role", null, user.role),
+        buildFieldChange("Status", null, user.status),
+        buildFieldChange("Permissions", [], Array.isArray(user.permissions) ? user.permissions : []),
+      ].filter(Boolean),
+      after: buildUserSnapshot(user),
     },
   });
 
@@ -202,7 +237,7 @@ async function updateUser(req, res) {
 
   const permissionsBefore = Array.isArray(user.permissions) ? user.permissions.slice() : [];
   const roleBefore = user.role;
-  const statusBefore = user.status;
+  const beforeSnapshot = buildUserSnapshot(user);
 
   if (req.body.firstName !== undefined) {
     const firstName = normalizeText(req.body.firstName);
@@ -286,15 +321,29 @@ async function updateUser(req, res) {
 
   await user.save();
 
+  const afterSnapshot = buildUserSnapshot(user);
+  const fieldChanges = [
+    buildFieldChange("First Name", beforeSnapshot.firstName, afterSnapshot.firstName),
+    buildFieldChange("Last Name", beforeSnapshot.lastName, afterSnapshot.lastName),
+    buildFieldChange("Role", beforeSnapshot.role, afterSnapshot.role),
+    buildFieldChange("Status", beforeSnapshot.status, afterSnapshot.status),
+    buildFieldChange("Permissions", beforeSnapshot.permissions, afterSnapshot.permissions),
+    buildFieldChange("Manageable Roles", beforeSnapshot.manageableRoles, afterSnapshot.manageableRoles),
+  ].filter(Boolean);
+
   await createUserAuditLog({
     actionType: USER_AUDIT_ACTIONS.USER_UPDATED,
     performedBy: actor._id,
     targetUserId: user._id,
     metadata: {
-      role: user.role,
-      status: user.status,
-      firstName: user.firstName,
-      lastName: user.lastName,
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
+      changes: fieldChanges,
+      before: beforeSnapshot,
+      after: afterSnapshot,
     },
   });
 
@@ -304,14 +353,80 @@ async function updateUser(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
-      roleBefore,
-      roleAfter: user.role,
-      statusBefore,
-      statusAfter: user.status,
-      permissionsBefore,
-      permissionsAfter: Array.isArray(user.permissions) ? user.permissions : [],
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
+      changes: fieldChanges,
+      before: beforeSnapshot,
+      after: afterSnapshot,
     },
   });
+
+  if (roleBefore !== user.role) {
+    await Promise.all([
+      createUserAuditLog({
+        actionType: USER_AUDIT_ACTIONS.ROLE_CHANGED,
+        performedBy: actor._id,
+        targetUserId: user._id,
+        metadata: {
+          targetUser: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+          },
+          changes: [buildFieldChange("Role", roleBefore, user.role)].filter(Boolean),
+        },
+      }),
+      RbacAuditLog.create({
+        action: "ROLE_CHANGED",
+        performedBy: actor._id,
+        targetId: user._id,
+        targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+        metadata: {
+          targetUser: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+          },
+          changes: [buildFieldChange("Role", roleBefore, user.role)].filter(Boolean),
+        },
+      }),
+    ]);
+  }
+
+  if (JSON.stringify(permissionsBefore) !== JSON.stringify(afterSnapshot.permissions)) {
+    await Promise.all([
+      createUserAuditLog({
+        actionType: USER_AUDIT_ACTIONS.PERMISSIONS_UPDATED,
+        performedBy: actor._id,
+        targetUserId: user._id,
+        metadata: {
+          targetUser: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+          },
+          changes: [buildFieldChange("Permissions", permissionsBefore, afterSnapshot.permissions)].filter(Boolean),
+        },
+      }),
+      RbacAuditLog.create({
+        action: "PERMISSIONS_UPDATED",
+        performedBy: actor._id,
+        targetId: user._id,
+        targetType: RBAC_AUDIT_TARGET_TYPES.USER,
+        metadata: {
+          targetUser: {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+          },
+          changes: [buildFieldChange("Permissions", permissionsBefore, afterSnapshot.permissions)].filter(Boolean),
+        },
+      }),
+    ]);
+  }
 
   res.json(toPublicUser(user));
 }
@@ -367,6 +482,11 @@ async function resetUserPassword(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
       email: user.email,
       role: user.role,
     },
@@ -424,6 +544,11 @@ async function pauseUser(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
       email: user.email,
       role: user.role,
     },
@@ -477,6 +602,11 @@ async function resumeUser(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
       email: user.email,
       role: user.role,
     },
@@ -536,6 +666,11 @@ async function deleteUser(req, res) {
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {
+      targetUser: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+      },
       email: user.email,
       role: user.role,
     },

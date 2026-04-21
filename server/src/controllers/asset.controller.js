@@ -176,6 +176,81 @@ async function listAssets(req, res) {
   res.json(assets.map(serializeAsset));
 }
 
+async function listMyAssets(req, res) {
+  const userId = req.user?._id;
+  if (!userId) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const assets = await Asset.find({
+    assignedTo: userId,
+    isDeleted: false,
+  })
+    .sort({ createdAt: -1 })
+    .populate("product")
+    .populate("location")
+    .populate("assignedTo", "firstName lastName email");
+
+  const serializedAssets = assets.map(serializeAsset);
+  const includeAuditLogs = String(req.query.includeAuditLogs || "").toLowerCase() === "true";
+
+  if (!includeAuditLogs || !assets.length) {
+    res.json(serializedAssets);
+    return;
+  }
+
+  const parsedLimit = Number(req.query.auditLogLimit);
+  const auditLogLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 20) : 5;
+
+  const assetIds = assets.map((asset) => asset._id);
+  const logs = await AuditLog.find({
+    asset: { $in: assetIds },
+    isDeleted: false,
+  })
+    .sort({ timestamp: -1, createdAt: -1, _id: -1 })
+    .populate("performedBy", "firstName lastName email")
+    .populate("fromLocation toLocation", "name code")
+    .populate("fromAssignee toAssignee", "firstName lastName email");
+
+  const logsByAssetId = new Map();
+
+  for (const log of logs) {
+    const key = String(log.asset);
+    const currentLogs = logsByAssetId.get(key) || [];
+
+    if (currentLogs.length < auditLogLimit) {
+      currentLogs.push(log);
+      logsByAssetId.set(key, currentLogs);
+    }
+  }
+
+  res.json(
+    serializedAssets.map((asset) => ({
+      ...asset,
+      recentAuditLogs: logsByAssetId.get(String(asset._id)) || [],
+    }))
+  );
+}
+
+async function listAssetsByUser(req, res) {
+  const { userId } = req.params;
+
+  if (!isValidObjectId(userId)) {
+    throw new ApiError(400, "Invalid user id");
+  }
+
+  const assets = await Asset.find({
+    assignedTo: userId,
+    isDeleted: false,
+  })
+    .sort({ updatedAt: -1 })
+    .populate("product")
+    .populate("location")
+    .populate("assignedTo", "firstName lastName email");
+
+  res.json(assets.map(serializeAsset));
+}
+
 async function getAssetDetails(req, res) {
   if (req.user?.role !== "SUPER_ADMIN") {
     throw new ApiError(403, "Only super admins can access device info details");
@@ -416,8 +491,10 @@ async function performAssetAction(req, res) {
     throw new ApiError(400, "performedById is required");
   }
 
-  const result = await runAssetActionTransaction((session) =>
-    applyAssetAction({
+  const actionName = String(req.body.action || "");
+
+  const result = await runAssetActionTransaction(async (session) => {
+    const actionResult = await applyAssetAction({
       assetIdentifier: req.params.assetId,
       action: req.body.action,
       performedById,
@@ -430,8 +507,34 @@ async function performAssetAction(req, res) {
       source: "WEB",
       payload: req.body,
       session,
-    })
-  );
+    });
+
+    if (actionResult.duplicate) {
+      return actionResult;
+    }
+
+    if (actionName === "ASSIGN_DEVICE") {
+      await RbacAuditLog.create(
+        [
+          {
+            action: "ASSET_ASSIGNED",
+            performedBy: performedById,
+            targetId: actionResult.asset._id,
+            targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+            metadata: {
+              assetId: actionResult.asset.assetId,
+              toAssigneeId: actionResult.asset.assignedTo?._id || actionResult.asset.assignedTo || null,
+              toLocationId: actionResult.asset.location?._id || actionResult.asset.location || null,
+              status: actionResult.asset.status,
+            },
+          },
+        ],
+        { session }
+      );
+    }
+
+    return actionResult;
+  });
 
   if (result.duplicate) {
     return res.status(200).json({
@@ -444,21 +547,6 @@ async function performAssetAction(req, res) {
     .populate("product")
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
-
-  if (String(req.body.action || "") === "ASSIGN_DEVICE") {
-    await RbacAuditLog.create({
-      action: "ASSET_ASSIGNED",
-      performedBy: performedById,
-      targetId: asset._id,
-      targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
-      metadata: {
-        assetId: asset.assetId,
-        toAssigneeId: asset.assignedTo?._id || asset.assignedTo || null,
-        toLocationId: asset.location?._id || asset.location || null,
-        status: asset.status,
-      },
-    });
-  }
 
   return res.json({
     duplicate: false,
@@ -473,82 +561,96 @@ async function updateAsset(req, res) {
     throw new ApiError(403, "Missing permission: UPDATE_ASSET");
   }
 
-  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId));
-  if (!asset) {
-    throw new ApiError(404, "Asset not found");
-  }
-
-  const before = {
-    product: asset.product,
-    serialNumber: asset.serialNumber,
-    location: asset.location,
-    assignedTo: asset.assignedTo,
-    status: asset.status,
-  };
-
-  if (req.body.productId !== undefined) {
-    const product = await Product.findOne({ _id: req.body.productId, isDeleted: false });
-    if (!product) {
-      throw new ApiError(400, "Invalid product reference");
+  const populated = await runAssetActionTransaction(async (session) => {
+    const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).session(session);
+    if (!asset) {
+      throw new ApiError(404, "Asset not found");
     }
-    asset.product = product._id;
-  }
 
-  if (req.body.serialNumber !== undefined) {
-    asset.serialNumber = String(req.body.serialNumber || "").trim() || null;
-  }
+    const before = {
+      product: asset.product,
+      serialNumber: asset.serialNumber,
+      location: asset.location,
+      assignedTo: asset.assignedTo,
+      status: asset.status,
+    };
 
-  if (req.body.locationId !== undefined) {
-    const location = await Location.findOne({ _id: req.body.locationId, isDeleted: false });
-    if (!location) {
-      throw new ApiError(400, "Invalid location reference");
-    }
-    asset.location = location._id;
-  }
-
-  if (req.body.assignedToId !== undefined) {
-    if (!req.body.assignedToId) {
-      asset.assignedTo = null;
-    } else {
-      const user = await User.findOne({ _id: req.body.assignedToId, isDeleted: false });
-      if (!user) {
-        throw new ApiError(400, "Invalid assignee reference");
+    if (req.body.productId !== undefined) {
+      const product = await Product.findOne({ _id: req.body.productId, isDeleted: false }).session(session);
+      if (!product) {
+        throw new ApiError(400, "Invalid product reference");
       }
-      asset.assignedTo = user._id;
+      asset.product = product._id;
     }
-  }
 
-  if (req.body.status !== undefined) {
-    const nextStatus = String(req.body.status || "").trim();
-    if (!Object.values(ASSET_STATUSES).includes(nextStatus)) {
-      throw new ApiError(400, "Invalid asset status");
+    if (req.body.serialNumber !== undefined) {
+      asset.serialNumber = String(req.body.serialNumber || "").trim() || null;
     }
-    asset.status = nextStatus;
-  }
 
-  await asset.save();
+    if (req.body.locationId !== undefined) {
+      const location = await Location.findOne({ _id: req.body.locationId, isDeleted: false }).session(session);
+      if (!location) {
+        throw new ApiError(400, "Invalid location reference");
+      }
+      asset.location = location._id;
+    }
 
-  const populated = await Asset.findById(asset._id)
-    .populate("product")
-    .populate("location")
-    .populate("assignedTo", "firstName lastName email");
+    if (req.body.assignedToId !== undefined) {
+      if (!req.body.assignedToId) {
+        asset.assignedTo = null;
+      } else {
+        const user = await User.findOne({ _id: req.body.assignedToId, isDeleted: false }).session(session);
+        if (!user) {
+          throw new ApiError(400, "Invalid assignee reference");
+        }
+        asset.assignedTo = user._id;
+      }
+    }
 
-  await RbacAuditLog.create({
-    action: "ASSET_UPDATED",
-    performedBy: req.user?._id,
-    targetId: asset._id,
-    targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
-    metadata: {
-      assetId: populated.assetId,
-      before,
-      after: {
-        product: populated.product?._id || populated.product,
-        serialNumber: populated.serialNumber,
-        location: populated.location?._id || populated.location,
-        assignedTo: populated.assignedTo?._id || populated.assignedTo || null,
-        status: populated.status,
-      },
-    },
+    if (req.body.status !== undefined) {
+      const nextStatus = String(req.body.status || "").trim();
+      if (!Object.values(ASSET_STATUSES).includes(nextStatus)) {
+        throw new ApiError(400, "Invalid asset status");
+      }
+      asset.status = nextStatus;
+    }
+
+    await asset.save({ session });
+
+    const populatedAsset = await Asset.findById(asset._id)
+      .populate("product")
+      .populate("location")
+      .populate("assignedTo", "firstName lastName email")
+      .session(session);
+
+    if (!populatedAsset) {
+      throw new ApiError(404, "Asset not found");
+    }
+
+    await RbacAuditLog.create(
+      [
+        {
+          action: "ASSET_UPDATED",
+          performedBy: req.user?._id,
+          targetId: asset._id,
+          targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+          metadata: {
+            assetId: populatedAsset.assetId,
+            before,
+            after: {
+              product: populatedAsset.product?._id || populatedAsset.product,
+              serialNumber: populatedAsset.serialNumber,
+              location: populatedAsset.location?._id || populatedAsset.location,
+              assignedTo: populatedAsset.assignedTo?._id || populatedAsset.assignedTo || null,
+              status: populatedAsset.status,
+            },
+          },
+        },
+      ],
+      { session }
+    );
+
+    return populatedAsset;
   });
 
   res.json(serializeAsset(populated));
@@ -560,22 +662,29 @@ async function deleteAsset(req, res) {
     throw new ApiError(403, "Missing permission: DELETE_ASSET");
   }
 
-  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId));
-  if (!asset) {
-    throw new ApiError(404, "Asset not found");
-  }
+  await runAssetActionTransaction(async (session) => {
+    const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).session(session);
+    if (!asset) {
+      throw new ApiError(404, "Asset not found");
+    }
 
-  asset.isDeleted = true;
-  await asset.save();
+    asset.isDeleted = true;
+    await asset.save({ session });
 
-  await RbacAuditLog.create({
-    action: "ASSET_DELETED",
-    performedBy: req.user?._id,
-    targetId: asset._id,
-    targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
-    metadata: {
-      assetId: asset.assetId,
-    },
+    await RbacAuditLog.create(
+      [
+        {
+          action: "ASSET_DELETED",
+          performedBy: req.user?._id,
+          targetId: asset._id,
+          targetType: RBAC_AUDIT_TARGET_TYPES.ASSET,
+          metadata: {
+            assetId: asset.assetId,
+          },
+        },
+      ],
+      { session }
+    );
   });
 
   res.json({ message: "Asset deleted successfully" });
@@ -584,6 +693,8 @@ async function deleteAsset(req, res) {
 module.exports = {
   getAssetBootstrap,
   listAssets,
+  listMyAssets,
+  listAssetsByUser,
   getAssetById,
   getAssetDetails,
   getDeviceByIdPublic,

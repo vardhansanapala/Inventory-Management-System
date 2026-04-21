@@ -125,6 +125,24 @@ async function applyAssetAction({
   const normalizedReason = resolveActionReason(action, reason);
   const fromLocation = asset.location;
   const fromAssignee = asset.assignedTo;
+
+  // Pre-condition checks to prevent no-op / duplicate actions.
+  // These run before any writes/log creation so we avoid unnecessary DB work.
+  if (action === ASSET_ACTIONS.ASSIGN_DEVICE) {
+    const currentAssigneeId = fromAssignee ? String(fromAssignee) : "";
+    const nextAssigneeId = refs.assignedTo?._id ? String(refs.assignedTo._id) : "";
+    if (currentAssigneeId && nextAssigneeId && currentAssigneeId === nextAssigneeId) {
+      throw new ApiError(400, "Asset is already assigned to this user.");
+    }
+  }
+
+  if (action === ASSET_ACTIONS.TRANSFER) {
+    const currentLocationId = fromLocation ? String(fromLocation) : "";
+    const nextLocationId = refs.location?._id ? String(refs.location._id) : "";
+    if (currentLocationId && nextLocationId && currentLocationId === nextLocationId) {
+      throw new ApiError(400, "Asset is already in the target location.");
+    }
+  }
   const transition = buildTransition({
     asset,
     action,
@@ -132,6 +150,18 @@ async function applyAssetAction({
     payload,
     reason: normalizedReason,
   });
+
+  const nextStatus = transition.status;
+  if (nextStatus && String(nextStatus) === String(fromStatus || "")) {
+    const nextLocationId = transition.location ? String(transition.location) : "";
+    const nextAssigneeId = transition.assignedTo ? String(transition.assignedTo) : "";
+    const currentLocationId = fromLocation ? String(fromLocation) : "";
+    const currentAssigneeId = fromAssignee ? String(fromAssignee) : "";
+
+    if (nextLocationId === currentLocationId && nextAssigneeId === currentAssigneeId) {
+      throw new ApiError(400, `Asset is already in status: ${nextStatus}`);
+    }
+  }
 
   asset.status = transition.status;
   asset.location = transition.location;

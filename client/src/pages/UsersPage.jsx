@@ -12,6 +12,7 @@ import { ActionFeedback } from "../components/ActionFeedback";
 import { ActionMenu } from "../components/ActionMenu";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
+import { UserAssignedAssetsModal } from "../components/UserAssignedAssetsModal";
 import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from "../constants/permissions";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
@@ -179,7 +180,9 @@ export function UsersPage() {
   const canEditUser = hasPermission(currentUser, PERMISSIONS.EDIT_USER);
   const canDeleteUser = hasPermission(currentUser, PERMISSIONS.DELETE_USER);
   const canResetPassword = hasPermission(currentUser, PERMISSIONS.RESET_PASSWORD);
+  const canViewAssignedDevices = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.SUPER_ADMIN;
   const canSeeUserActions = canEditUser || canDeleteUser || canResetPassword;
+  const showUserActionsColumn = canSeeUserActions || canViewAssignedDevices;
 
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
@@ -199,6 +202,7 @@ export function UsersPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [deleteUserTarget, setDeleteUserTarget] = useState(null);
+  const [deviceViewerUser, setDeviceViewerUser] = useState(null);
   const createFeedback = useActionFeedback({ preferGlobal: true });
   const rowFeedback = useActionFeedback();
   const editFeedback = useActionFeedback();
@@ -680,7 +684,7 @@ export function UsersPage() {
                 <th>Role</th>
                 <th>Status</th>
                 <th>Last Updated</th>
-                {canSeeUserActions ? <th>Actions</th> : null}
+                {showUserActionsColumn ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -714,9 +718,20 @@ export function UsersPage() {
                         <strong>{formatTimestamp(targetUser.updatedAt)}</strong>
                         <div className="table-subtle">Created {formatTimestamp(targetUser.createdAt)}</div>
                       </td>
-                      {canSeeUserActions ? (
+                      {showUserActionsColumn ? (
                         <td>
                           <div className="row-feedback-slot">
+                            <div className="users-row-actions">
+                              {canViewAssignedDevices ? (
+                                <button
+                                  className="button ghost button-rect button-sm"
+                                  type="button"
+                                  onClick={() => setDeviceViewerUser(targetUser)}
+                                >
+                                  View Devices
+                                </button>
+                              ) : null}
+                              {canSeeUserActions ? (
                           <ActionMenu
                             label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
                             items={[
@@ -754,6 +769,8 @@ export function UsersPage() {
                               },
                             ]}
                           />
+                              ) : null}
+                            </div>
                           {activeRowFeedbackId === targetUser._id ? (
                             <ActionFeedback
                               type={rowFeedback.feedback?.type}
@@ -775,7 +792,7 @@ export function UsersPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={canSeeUserActions ? 6 : 5}>No users found.</td>
+                  <td colSpan={showUserActionsColumn ? 6 : 5}>No users found.</td>
                 </tr>
               )}
             </tbody>
@@ -976,6 +993,14 @@ export function UsersPage() {
         >
           <p>This action cannot be undone.</p>
         </Modal>
+      ) : null}
+
+      {deviceViewerUser ? (
+        <UserAssignedAssetsModal
+          currentUser={currentUser}
+          targetUser={deviceViewerUser}
+          onClose={() => setDeviceViewerUser(null)}
+        />
       ) : null}
     </div>
   );

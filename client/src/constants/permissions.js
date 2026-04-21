@@ -3,6 +3,7 @@ import { ROLES } from "./roles";
 export const MODULE_KEYS = {
   DASHBOARD: "dashboard",
   ASSETS: "assets",
+  DEVICES: "devices",
   LOGS: "logs",
   SETUP: "setup",
   USERS: "users",
@@ -66,7 +67,7 @@ export function canAccessModule(user, moduleKey) {
     return true;
   }
 
-  if (moduleKey === MODULE_KEYS.ASSETS) {
+  if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES) {
     return hasAnyPermission(user, [PERMISSIONS.VIEW_ASSET, PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.ASSIGN_ASSET]);
   }
 
@@ -79,7 +80,7 @@ export function canAccessModule(user, moduleKey) {
   }
 
   if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
-    return user?.role === ROLES.SUPER_ADMIN;
+    return user?.role === ROLES.SUPER_ADMIN || user?.role === ROLES.EMPLOYEE;
   }
 
   return false;
@@ -98,11 +99,18 @@ export function getVisibleSidebarLinks(user) {
   const links = [
     { to: "/", label: "Dashboard", moduleKey: MODULE_KEYS.DASHBOARD },
     { to: "/assets", label: "Assets", moduleKey: MODULE_KEYS.ASSETS },
+    { to: "/devices", label: "Devices", moduleKey: MODULE_KEYS.DEVICES },
     { to: "/device-info", label: "Device Info", moduleKey: MODULE_KEYS.DEVICE_INFO },
     { to: "/logs", label: "Logs", moduleKey: MODULE_KEYS.LOGS },
     { to: "/setup", label: "Setup", moduleKey: MODULE_KEYS.SETUP },
     { to: "/users", label: "Users", moduleKey: MODULE_KEYS.USERS },
   ];
 
-  return links.filter((link) => canAccessModule(user, link.moduleKey));
+  return links.filter((link) => {
+    if (link.moduleKey === MODULE_KEYS.DEVICE_INFO) {
+      return user?.role === ROLES.EMPLOYEE;
+    }
+
+    return canAccessModule(user, link.moduleKey);
+  });
 }

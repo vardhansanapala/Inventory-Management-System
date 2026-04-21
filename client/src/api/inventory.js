@@ -151,6 +151,23 @@ export function listAssets(searchParams = {}) {
   return request(`/assets${query ? `?${query}` : ""}`);
 }
 
+export function getMyAssets(searchParams = {}) {
+  const params = new URLSearchParams();
+
+  Object.entries(searchParams).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, String(value));
+    }
+  });
+
+  const query = params.toString();
+  return request(`/assets/my-assets${query ? `?${query}` : ""}`);
+}
+
+export function getAssetsByUser(userId) {
+  return request(`/assets/by-user/${encodeURIComponent(userId)}`);
+}
+
 // SUPER_ADMIN-only (Device Info module): paginated assets
 export function getAssets({ page = 1, limit = 10, search = "" } = {}) {
   const params = new URLSearchParams();

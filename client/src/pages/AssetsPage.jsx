@@ -306,7 +306,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const [copiedScanUrl, setCopiedScanUrl] = useState("");
   const [assignMode, setAssignMode] = useState("scan");
   const [assignLookupInput, setAssignLookupInput] = useState("");
-  const [assignLookupBusy, setAssignLookupBusy] = useState(false);
+  /** Tracks in-flight actions: create-device, assign-lookup, asset-action:<id>, edit-asset:<id>, delete-asset:<id> */
+  const [busyKey, setBusyKey] = useState("");
   const [scanError, setScanError] = useState("");
   const [scanStatus, setScanStatus] = useState("idle");
   const [scanEngine, setScanEngine] = useState("native");
@@ -323,11 +324,12 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const flashTimeoutRef = useRef(null);
   const [flashRowId, setFlashRowId] = useState("");
   const [flashRowVariant, setFlashRowVariant] = useState("success");
-  const [actionSubmitting, setActionSubmitting] = useState(false);
   const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
   const searchDebounceRef = useRef(null);
   const previousSearchRef = useRef("");
   const incomingAssetId = incomingAsset?._id || "";
+  const urlAssetIdForSelection = String(searchParams.get("assetId") || "").trim();
+  const pendingConsumeAssetId = String(incomingAssetId || urlAssetIdForSelection).trim();
 
   const canCreateAsset = hasPermission(currentUser, PERMISSIONS.CREATE_ASSET);
   const canUpdateAsset = hasPermission(currentUser, PERMISSIONS.UPDATE_ASSET);
@@ -647,7 +649,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     const assetIdentifier = extractAssetId(decodedValue);
     setLastDecodedValue(decodedValue);
     setAssignLookupInput(assetIdentifier);
-    setAssignLookupBusy(true);
+    setBusyKey("assign-lookup");
     selectionFeedback.clear();
 
     try {
@@ -657,7 +659,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       fallbackToManual("The scanned value could not be matched to a device. Manual Asset ID entry has been enabled.");
       return;
     } finally {
-      setAssignLookupBusy(false);
+      setBusyKey("");
     }
 
     stopScanner();
@@ -790,13 +792,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   }, [search, statusFilter]);
 
   useEffect(() => {
-    if (!incomingAssetId) return;
+    if (!pendingConsumeAssetId) return;
 
     let isCancelled = false;
 
     async function consumeIncomingAsset() {
       try {
-        const asset = await getAssetById(incomingAssetId);
+        const asset = await getAssetById(pendingConsumeAssetId);
         if (isCancelled) return;
         await applySelectedAsset(asset);
       } catch (err) {
@@ -804,10 +806,12 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
         selectionFeedback.showError(err.message || "Unable to load the selected device.");
       } finally {
         if (!isCancelled) {
+          const nextParams = new URLSearchParams(location.search);
+          nextParams.delete("assetId");
           navigate(
             {
               pathname: location.pathname,
-              search: location.search,
+              search: nextParams.toString() ? `?${nextParams.toString()}` : "",
             },
             { replace: true, state: null }
           );
@@ -820,7 +824,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     return () => {
       isCancelled = true;
     };
-  }, [incomingAssetId, location.pathname, location.search, navigate, selectionFeedback]);
+  }, [pendingConsumeAssetId, location.pathname, location.search, navigate, selectionFeedback]);
 
   useEffect(() => {
     loadQrPreview(getAssetId(selectedAsset), {
@@ -883,6 +887,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     if (!editingAsset?._id) return;
 
     modalFeedback.clear();
+    const editKey = `edit-asset:${editingAsset._id}`;
+    setBusyKey(editKey);
 
     try {
       await updateAsset(editingAsset._id, {
@@ -900,6 +906,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       modalFeedback.showSuccess("Asset updated successfully.");
     } catch (err) {
       modalFeedback.showError(err.message || "Unable to update asset.");
+    } finally {
+      setBusyKey("");
     }
   }
 
@@ -907,6 +915,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     if (!deleteAssetTarget?._id) return;
 
     modalFeedback.clear();
+    const deleteKey = `delete-asset:${deleteAssetTarget._id}`;
+    setBusyKey(deleteKey);
 
     try {
       await deleteAsset(deleteAssetTarget._id);
@@ -921,6 +931,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       modalFeedback.showSuccess("Asset deleted successfully.");
     } catch (err) {
       modalFeedback.showError(err.message || "Unable to delete asset.");
+    } finally {
+      setBusyKey("");
     }
   }
 
@@ -944,7 +956,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     createFeedback.clear();
 
     try {
-      setCreatedAssetQrRegenerating(true);
+      setBusyKey("create-device");
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
       createFeedback.showSuccess(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`, { global: true });
@@ -954,13 +966,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     } catch (err) {
       createFeedback.showError(err.message || "Unable to create asset.");
     } finally {
-      setCreatedAssetQrRegenerating(false);
+      setBusyKey("");
     }
   }
 
   async function handleAssignLookupSubmit(event) {
     event.preventDefault();
-    setAssignLookupBusy(true);
+    setBusyKey("assign-lookup");
     selectionFeedback.clear();
 
     try {
@@ -968,11 +980,14 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     } catch (err) {
       selectionFeedback.showError(err.message || "Device not found.");
     } finally {
-      setAssignLookupBusy(false);
+      setBusyKey("");
     }
   }
 
   async function handleSimulateScan() {
+    if (busyKey === "assign-lookup") {
+      return;
+    }
     if (!assignLookupInput.trim()) {
       setScanError("Enter an Asset ID first to simulate a scan.");
       return;
@@ -1001,7 +1016,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     }
 
     workflowFeedback.clear();
-    setActionSubmitting(true);
+    const actionBusyKey = `asset-action:${selectedAssetId}`;
+    setBusyKey(actionBusyKey);
 
     const previousSelected = selectedAsset;
     const previousAssets = assets;
@@ -1069,9 +1085,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       setAssets(previousAssets);
       flashRow(selectedAssetId, "error");
       workflowFeedback.showError(err.message || "Action failed.");
-    }
-    finally {
-      setActionSubmitting(false);
+    } finally {
+      setBusyKey("");
     }
   }
 
@@ -1217,9 +1232,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
               </select>
               <textarea className="input textarea assets-full" name="notes" placeholder="Creation notes" value={createForm.notes} onChange={handleCreateChange} />
               <div className="form-actions assets-full">
-                <button className="button dark button-rect with-spinner" type="submit" disabled={createdAssetQrRegenerating}>
-                  {createdAssetQrRegenerating ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
-                  <span>{createdAssetQrRegenerating ? "Creating..." : "Create Device"}</span>
+                <button
+                  className="button dark button-rect with-spinner"
+                  type="submit"
+                  disabled={busyKey === "create-device" || createdAssetQrRegenerating}
+                >
+                  {busyKey === "create-device" || createdAssetQrRegenerating ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                  <span>{busyKey === "create-device" ? "Creating..." : createdAssetQrRegenerating ? "Working..." : "Create Device"}</span>
                 </button>
               </div>
               </form>
@@ -1281,11 +1300,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                   value={assignLookupInput}
                   onChange={(event) => setAssignLookupInput(event.target.value)}
                 />
-                <button className="button dark with-spinner" type="submit" disabled={assignLookupBusy}>
-                  {assignLookupBusy ? <span className="button-spinner" aria-hidden /> : null}
-                  <span>{assignLookupBusy ? "Selecting..." : "Select Device"}</span>
+                <button className="button dark with-spinner" type="submit" disabled={busyKey === "assign-lookup"}>
+                  {busyKey === "assign-lookup" ? <span className="button-spinner" aria-hidden /> : null}
+                  <span>{busyKey === "assign-lookup" ? "Selecting..." : "Select Device"}</span>
                 </button>
-                <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={assignLookupBusy}>Simulate Scan</button>
+                <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={busyKey === "assign-lookup"}>
+                  Simulate Scan
+                </button>
               </form>
               <ActionFeedback
                 type={selectionFeedback.feedback?.type}
@@ -1357,7 +1378,14 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                 />
 
                 <form className="form-grid" onSubmit={submitAction}>
-                  <fieldset className="action-fieldset" disabled={!selectedAsset || !validActionOptions.length}>
+                  <fieldset
+                    className="action-fieldset"
+                    disabled={
+                      !selectedAsset ||
+                      !validActionOptions.length ||
+                      (Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}`)
+                    }
+                  >
                     <div className="selected-asset-banner">
                       <span>Action Target</span>
                       <strong>{getAssetId(selectedAsset) || "No device selected"}</strong>
@@ -1445,10 +1473,19 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     <button
                       className="button dark button-rect with-spinner"
                       type="submit"
-                      disabled={!selectedAsset || !validActionOptions.length || actionSubmitting || !isActionFormValid}
+                      disabled={
+                        !selectedAsset ||
+                        !validActionOptions.length ||
+                        !isActionFormValid ||
+                        (Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}`)
+                      }
                     >
-                      {actionSubmitting ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
-                      <span>{actionSubmitting ? "Applying..." : "Apply Action"}</span>
+                      {Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}` ? (
+                        <span className="button-spinner button-spinner-lg" aria-hidden />
+                      ) : null}
+                      <span>
+                        {Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}` ? "Applying..." : "Apply Action"}
+                      </span>
                     </button>
                   </fieldset>
                 </form>
@@ -1474,11 +1511,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
           }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setEditingAsset(null)}>
+              <button
+                className="button ghost button-rect"
+                type="button"
+                onClick={() => setEditingAsset(null)}
+                disabled={busyKey === `edit-asset:${editingAsset._id}`}
+              >
                 Cancel
               </button>
-              <button className="button dark button-rect with-spinner" type="button" onClick={submitEditAsset} disabled={!canUpdateAsset}>
-                <span>Save</span>
+              <button
+                className="button dark button-rect with-spinner"
+                type="button"
+                onClick={submitEditAsset}
+                disabled={!canUpdateAsset || busyKey === `edit-asset:${editingAsset._id}`}
+              >
+                {busyKey === `edit-asset:${editingAsset._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `edit-asset:${editingAsset._id}` ? "Saving..." : "Save"}</span>
               </button>
             </>
           }
@@ -1555,11 +1603,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
           }
           actions={
             <>
-              <button className="button ghost button-rect" type="button" onClick={() => setDeleteAssetTarget(null)}>
+              <button
+                className="button ghost button-rect"
+                type="button"
+                onClick={() => setDeleteAssetTarget(null)}
+                disabled={busyKey === `delete-asset:${deleteAssetTarget._id}`}
+              >
                 Cancel
               </button>
-              <button className="button danger button-rect with-spinner" type="button" onClick={confirmDeleteAsset} disabled={!canDeleteAsset}>
-                <span>Delete</span>
+              <button
+                className="button danger button-rect with-spinner"
+                type="button"
+                onClick={confirmDeleteAsset}
+                disabled={!canDeleteAsset || busyKey === `delete-asset:${deleteAssetTarget._id}`}
+              >
+                {busyKey === `delete-asset:${deleteAssetTarget._id}` ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
+                <span>{busyKey === `delete-asset:${deleteAssetTarget._id}` ? "Deleting..." : "Delete"}</span>
               </button>
             </>
           }

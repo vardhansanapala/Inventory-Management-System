@@ -10,8 +10,11 @@ import { SetupPage } from "./pages/SetupPage";
 import { LoginPage } from "./pages/LoginPage";
 import { UsersPage } from "./pages/UsersPage";
 import { DeviceInfoPage } from "./pages/DeviceInfoPage";
+import { DevicesPage } from "./pages/DevicesPage";
+import { EmployeeDeviceInfoPage } from "./pages/EmployeeDeviceInfoPage";
 import { AssignDevicePage } from "./pages/AssignDevicePage";
 import { useAuth } from "./context/AuthContext";
+import { ROLES } from "./constants/roles";
 
 export default function App() {
   const { user, loading: authLoading } = useAuth();
@@ -38,6 +41,14 @@ export default function App() {
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.ASSETS}>
               <AssetsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/devices"
+          element={
+            <ProtectedRoute moduleKey={MODULE_KEYS.DEVICES}>
+              <DevicesPage />
             </ProtectedRoute>
           }
         />
@@ -77,7 +88,7 @@ export default function App() {
           path="/device-info"
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.DEVICE_INFO}>
-              <DeviceInfoPage />
+              {user?.role === ROLES.EMPLOYEE ? <EmployeeDeviceInfoPage /> : <DeviceInfoPage />}
             </ProtectedRoute>
           }
         />

@@ -44,6 +44,7 @@ router.post(
 router.get("/:assetId/audit-logs", asyncHandler(getAssetAuditLogs));
 router.post(
   "/:assetId/action",
+  hasPermission(PERMISSIONS.ASSIGN_ASSET),
   requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
   asyncHandler(performAssetAction)
 );

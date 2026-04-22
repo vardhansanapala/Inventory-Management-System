@@ -1190,6 +1190,43 @@ textarea:focus {
   gap: 1.2rem;
 }
 
+.setup-list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.setup-list-filters {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  flex: 1 1 640px;
+}
+
+.setup-search-field {
+  min-width: min(320px, 100%);
+  flex: 1 1 260px;
+}
+
+.setup-search-field .input {
+  width: 100%;
+}
+
+.setup-filter-field {
+  min-width: 180px;
+}
+
+.setup-list-actions {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .setup-table-toolbar {
   display: flex;
   justify-content: flex-end;
@@ -1200,6 +1237,10 @@ textarea:focus {
   display: flex;
   justify-content: flex-end;
   align-items: center;
+}
+
+.setup-create-actions {
+  gap: 0.75rem;
 }
 
 /* Align textarea field stacks with surrounding inputs */
@@ -1564,6 +1605,16 @@ textarea:focus {
 @media (max-width: 980px) {
   .action-location-preview {
     grid-template-columns: 1fr;
+  }
+
+  .setup-list-toolbar,
+  .setup-list-actions {
+    align-items: stretch;
+  }
+
+  .setup-search-field,
+  .setup-filter-field {
+    min-width: 100%;
   }
 
   .users-create-grid {
@@ -2141,17 +2192,26 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.devices-toolbar-flat {
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
 .devices-toolbar .input {
   flex: 1;
   min-width: 200px;
+}
+
+.devices-filter-field {
+  min-width: 180px;
 }
 
 .devices-table .devices-row {
   cursor: pointer;
 }
 
-.devices-table .devices-row.is-active td {
-  background: rgba(87, 216, 255, 0.12);
+.devices-table .devices-row:hover td {
+  background: rgba(87, 216, 255, 0.08);
 }
 
 .devices-grouped {
@@ -2202,6 +2262,14 @@ textarea:focus {
 .devices-history-scroll {
   max-height: min(420px, 50vh);
   overflow: auto;
+}
+
+.devices-detail-modal .modal-body {
+  overflow: auto;
+}
+
+.devices-modal-history-scroll {
+  max-height: min(52vh, 460px);
 }
 
 @media (max-width: 980px) {

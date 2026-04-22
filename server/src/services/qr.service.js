@@ -19,9 +19,13 @@ function buildAssetQrValue(assetId) {
 }
 
 function buildAssetScanUrl(assetId) {
-  const baseUrl = String(env.qrDeepLinkBaseUrl || "http://localhost:5173/scan").replace(/\/+$/, "");
+  const baseUrl = String(env.qrDeepLinkBaseUrl || "http://localhost:5173/device-info?assetId=").trim();
   const normalizedAssetId = normalizeAssetId(assetId);
-  return normalizedAssetId ? `${baseUrl}/${encodeURIComponent(normalizedAssetId)}` : "";
+  if (!normalizedAssetId) return "";
+  if (baseUrl.includes("?assetId=")) {
+    return `${baseUrl}${encodeURIComponent(normalizedAssetId)}`;
+  }
+  return `${baseUrl.replace(/\/+$/, "")}/${encodeURIComponent(normalizedAssetId)}`;
 }
 
 module.exports = {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  createUser,
   deleteUser,
   listUsers,
   pauseUser,
@@ -13,168 +13,43 @@ import { ActionMenu } from "../components/ActionMenu";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { UserAssignedAssetsModal } from "../components/UserAssignedAssetsModal";
-import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from "../constants/permissions";
+import {
+  EditPermissionSections,
+  PasswordField,
+  USER_ROLE_FILTER_OPTIONS,
+  USER_ROLE_OPTIONS,
+  USER_STATUSES,
+  emptyEditForm,
+  emptyPasswordForm,
+  formatTimestamp,
+  getPasswordErrors,
+  sortUsersByUpdatedAtDesc,
+} from "../components/users/UserManagementShared";
+import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
 
-const USER_STATUSES = {
-  ACTIVE: "ACTIVE",
-  PAUSED: "PAUSED",
-};
+const USERS_PER_PAGE = 10;
 
-const emptyCreateForm = {
-  firstName: "",
-  lastName: "",
-  email: "",
-  role: ROLES.EMPLOYEE,
-  status: USER_STATUSES.ACTIVE,
-  password: "",
-  confirmPassword: "",
-};
-
-const emptyPasswordForm = {
-  password: "",
-  confirmPassword: "",
-};
-
-const emptyEditForm = {
-  firstName: "",
-  lastName: "",
-  role: ROLES.EMPLOYEE,
-  status: USER_STATUSES.ACTIVE,
-};
-
-const PERMISSION_GROUPS = [
-  {
-    title: "User",
-    subtitle: "Account lifecycle and credential access",
-    permissions: [PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD],
-  },
-  {
-    title: "Asset",
-    subtitle: "Registry, updates, and assignments",
-    permissions: [PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET],
-  },
-  {
-    title: "Product",
-    subtitle: "SKU and catalog management",
-    permissions: [PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT],
-  },
-];
-
-function getPasswordErrors(password, confirmPassword) {
-  const errors = {};
-
-  if (password.length < 6) {
-    errors.password = "Password must be at least 6 characters.";
-  }
-
-  if (confirmPassword && password !== confirmPassword) {
-    errors.confirmPassword = "Passwords must match.";
-  }
-
-  return errors;
-}
-
-function generateStrongPassword() {
-  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*";
-  const length = 12;
-  return Array.from({ length }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
-}
-
-function PasswordField({ label, value, onChange, visible, onToggle, error, autoComplete = "new-password" }) {
-  return (
-    <label className="field-stack">
-      {label ? <span>{label}</span> : null}
-      <div className="password-field">
-        <input
-          className="input"
-          type={visible ? "text" : "password"}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          autoComplete={autoComplete}
-        />
-        <button className="button ghost password-toggle" type="button" onClick={onToggle} title={visible ? "Hide password" : "Show password"}>
-          {visible ? "Hide" : "Show"}
-        </button>
-      </div>
-      {error ? <p className="field-error">{error}</p> : null}
-    </label>
-  );
-}
-
-function formatTimestamp(value) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
-}
-
-function PermissionGroupGrid({ selectedPermissions, onTogglePermission, onResetDefaults, resetLabel = "Reset to role defaults" }) {
-  return (
-    <>
-      <div className="users-permission-grid">
-        {PERMISSION_GROUPS.map((group) => (
-          <div key={group.title} className="users-permission-box">
-            <div className="users-permission-box-title">{group.title}</div>
-            <div className="table-subtle">{group.subtitle}</div>
-            <div className="users-permission-checks">
-              {group.permissions.map((perm) => (
-                <label key={perm} className="checkbox-label">
-                  <input type="checkbox" checked={selectedPermissions.includes(perm)} onChange={(event) => onTogglePermission(perm, event.target.checked)} />
-                  {perm}
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="inline-form">
-        <button className="button ghost" type="button" onClick={onResetDefaults}>
-          {resetLabel}
-        </button>
-      </div>
-    </>
-  );
-}
-
-function EditPermissionSections({ selectedPermissions, onTogglePermission, onResetDefaults }) {
-  return (
-    <div className="users-edit-perm-panel">
-      <div className="users-edit-perm-scroll">
-        {PERMISSION_GROUPS.map((group) => (
-          <section key={group.title} className="users-edit-perm-group" aria-label={group.title}>
-            <h3 className="users-edit-perm-group-title">{group.title.toUpperCase()}</h3>
-            <div className="users-edit-perm-checks">
-              {group.permissions.map((perm) => (
-                <label key={perm} className="checkbox-label users-edit-perm-check">
-                  <input type="checkbox" checked={selectedPermissions.includes(perm)} onChange={(event) => onTogglePermission(perm, event.target.checked)} />
-                  {perm}
-                </label>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-      <footer className="users-edit-perm-footer">
-        <button className="button ghost" type="button" onClick={onResetDefaults}>
-          Reset to role defaults
-        </button>
-      </footer>
-    </div>
-  );
+function getUserSearchValue(targetUser) {
+  return `${targetUser?.firstName || ""} ${targetUser?.lastName || ""} ${targetUser?.email || ""}`.toLowerCase();
 }
 
 export function UsersPage() {
+  const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [busyKey, setBusyKey] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [roleFilter, setRoleFilter] = useState("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
   const [activeRowFeedbackId, setActiveRowFeedbackId] = useState("");
   const [highlightedUserId, setHighlightedUserId] = useState("");
   const rowFlashTimeoutRef = useRef(null);
+
   const isSuperAdmin = currentUser?.role === ROLES.SUPER_ADMIN;
   const canCreateUser = hasPermission(currentUser, PERMISSIONS.CREATE_USER);
   const canEditUser = hasPermission(currentUser, PERMISSIONS.EDIT_USER);
@@ -183,12 +58,6 @@ export function UsersPage() {
   const canViewAssignedDevices = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.SUPER_ADMIN;
   const canSeeUserActions = canEditUser || canDeleteUser || canResetPassword;
   const showUserActionsColumn = canSeeUserActions || canViewAssignedDevices;
-
-  const [createForm, setCreateForm] = useState(emptyCreateForm);
-  const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [showCreateConfirm, setShowCreateConfirm] = useState(false);
-  const [createManageableRoles, setCreateManageableRoles] = useState([]);
-  const [createPermissions, setCreatePermissions] = useState([]);
 
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState(emptyEditForm);
@@ -203,36 +72,43 @@ export function UsersPage() {
 
   const [deleteUserTarget, setDeleteUserTarget] = useState(null);
   const [deviceViewerUser, setDeviceViewerUser] = useState(null);
-  const createFeedback = useActionFeedback({ preferGlobal: true });
   const rowFeedback = useActionFeedback();
   const editFeedback = useActionFeedback();
   const resetFeedback = useActionFeedback();
   const deleteFeedback = useActionFeedback();
 
-  const createPasswordErrors = getPasswordErrors(createForm.password, createForm.confirmPassword);
   const resetPasswordErrors = getPasswordErrors(passwordForm.password, passwordForm.confirmPassword);
-
-  const createFormValid = useMemo(() => {
-    return (
-      Boolean(createForm.firstName.trim()) &&
-      Boolean(createForm.lastName.trim()) &&
-      Boolean(createForm.email.trim()) &&
-      createForm.password.length >= 6 &&
-      createForm.password === createForm.confirmPassword
-    );
-  }, [createForm]);
-
   const resetFormValid = useMemo(() => {
     return passwordForm.password.length >= 6 && passwordForm.password === passwordForm.confirmPassword;
   }, [passwordForm]);
+
+  const filteredUsers = useMemo(() => {
+    const normalizedSearch = searchInput.trim().toLowerCase();
+
+    const searchFiltered = normalizedSearch
+      ? users.filter((targetUser) => getUserSearchValue(targetUser).includes(normalizedSearch))
+      : users;
+
+    const roleFiltered = roleFilter === "ALL"
+      ? searchFiltered
+      : searchFiltered.filter((targetUser) => targetUser.role === roleFilter);
+
+    return sortUsersByUpdatedAtDesc(roleFiltered);
+  }, [users, searchInput, roleFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
+  const paginatedUsers = useMemo(() => {
+    const startIndex = (currentPage - 1) * USERS_PER_PAGE;
+    return filteredUsers.slice(startIndex, startIndex + USERS_PER_PAGE);
+  }, [currentPage, filteredUsers]);
 
   async function fetchUsers() {
     try {
       setLoadError("");
       const data = await listUsers();
       setUsers(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setLoadError(err.message);
+    } catch (error) {
+      setLoadError(error.message || "Unable to load users.");
     } finally {
       setLoading(false);
     }
@@ -242,15 +118,17 @@ export function UsersPage() {
     fetchUsers();
   }, []);
 
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    const defaults = ROLE_DEFAULTS[createForm.role]?.permissions || [];
-    setCreatePermissions((current) => (current.length ? current : defaults));
-  }, [createForm.role, isSuperAdmin]);
-
   useEffect(() => () => {
     window.clearTimeout(rowFlashTimeoutRef.current);
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchInput, roleFilter]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   useEffect(() => {
     if (editingUser) {
@@ -260,6 +138,7 @@ export function UsersPage() {
 
   function flashUserRow(userId) {
     if (!userId) return;
+
     setHighlightedUserId(userId);
     window.clearTimeout(rowFlashTimeoutRef.current);
     rowFlashTimeoutRef.current = window.setTimeout(() => {
@@ -309,37 +188,25 @@ export function UsersPage() {
     return result;
   }
 
-  async function handleCreate(event) {
-    event.preventDefault();
-    if (!createFormValid) {
-      return;
-    }
-
-    await runUserAction({
-      key: "create-user",
-      feedbackController: createFeedback,
-      loadingMsg: "Creating user...",
-      successMsg: "User created successfully.",
-      errorMsg: "Unable to create user.",
-      action: () =>
-        createUser({
-          firstName: createForm.firstName.trim(),
-          lastName: createForm.lastName.trim(),
-          email: createForm.email.trim(),
-          role: createForm.role,
-          status: createForm.status,
-          password: createForm.password,
-          permissions: isSuperAdmin ? createPermissions : undefined,
-          manageableRoles: createForm.role === ROLES.ADMIN && isSuperAdmin ? createManageableRoles : undefined,
-        }),
-      afterSuccess: () => {
-        setCreateForm(emptyCreateForm);
-        setShowCreatePassword(false);
-        setShowCreateConfirm(false);
-        setCreateManageableRoles([]);
-        setCreatePermissions([]);
-      },
+  function openEditModal(targetUser) {
+    editFeedback.clear();
+    setEditingUser(targetUser);
+    setEditForm({
+      firstName: targetUser.firstName || "",
+      lastName: targetUser.lastName || "",
+      role: targetUser.role || ROLES.EMPLOYEE,
+      status: targetUser.status || USER_STATUSES.ACTIVE,
     });
+    setEditPermissions(Array.isArray(targetUser.permissions) ? targetUser.permissions : []);
+    setEditManageableRoles(Array.isArray(targetUser.manageableRoles) ? targetUser.manageableRoles : []);
+  }
+
+  function openResetModal(targetUser) {
+    resetFeedback.clear();
+    setResetPasswordUser(targetUser);
+    setPasswordForm(emptyPasswordForm);
+    setShowResetPassword(false);
+    setShowResetConfirm(false);
   }
 
   async function handleEdit() {
@@ -430,45 +297,6 @@ export function UsersPage() {
     });
   }
 
-  function openEditModal(targetUser) {
-    editFeedback.clear();
-    setEditingUser(targetUser);
-    setEditForm({
-      firstName: targetUser.firstName || "",
-      lastName: targetUser.lastName || "",
-      role: targetUser.role || ROLES.EMPLOYEE,
-      status: targetUser.status || USER_STATUSES.ACTIVE,
-    });
-    setEditPermissions(Array.isArray(targetUser.permissions) ? targetUser.permissions : []);
-    setEditManageableRoles(Array.isArray(targetUser.manageableRoles) ? targetUser.manageableRoles : []);
-  }
-
-  function openResetModal(targetUser) {
-    resetFeedback.clear();
-    setResetPasswordUser(targetUser);
-    setPasswordForm(emptyPasswordForm);
-    setShowResetPassword(false);
-    setShowResetConfirm(false);
-  }
-
-  function applyGeneratedPassword() {
-    const generated = generateStrongPassword();
-    setCreateForm((current) => ({
-      ...current,
-      password: generated,
-      confirmPassword: generated,
-    }));
-    setShowCreatePassword(true);
-    setShowCreateConfirm(true);
-  }
-
-  function toggleCreatePermission(permission, checked) {
-    setCreatePermissions((current) => {
-      if (checked) return Array.from(new Set([...current, permission]));
-      return current.filter((value) => value !== permission);
-    });
-  }
-
   function toggleEditPermission(permission, checked) {
     setEditPermissions((current) => {
       if (checked) return Array.from(new Set([...current, permission]));
@@ -476,7 +304,31 @@ export function UsersPage() {
     });
   }
 
-  const roleOptions = [ROLES.ADMIN, ROLES.EMPLOYEE];
+  function toggleEditAllPermissions() {
+    const allPermissions = new Set(editPermissions);
+    const hasAnyMissing = editPermissions.length === 0 || !editPermissions.includes(PERMISSIONS.CREATE_USER) || !editPermissions.includes(PERMISSIONS.EDIT_USER) || !editPermissions.includes(PERMISSIONS.DELETE_USER) || !editPermissions.includes(PERMISSIONS.RESET_PASSWORD) || !editPermissions.includes(PERMISSIONS.CREATE_ASSET) || !editPermissions.includes(PERMISSIONS.UPDATE_ASSET) || !editPermissions.includes(PERMISSIONS.DELETE_ASSET) || !editPermissions.includes(PERMISSIONS.ASSIGN_ASSET) || !editPermissions.includes(PERMISSIONS.CREATE_PRODUCT) || !editPermissions.includes(PERMISSIONS.EDIT_PRODUCT) || !editPermissions.includes(PERMISSIONS.DELETE_PRODUCT);
+
+    if (hasAnyMissing) {
+      allPermissions.add(PERMISSIONS.CREATE_USER);
+      allPermissions.add(PERMISSIONS.EDIT_USER);
+      allPermissions.add(PERMISSIONS.DELETE_USER);
+      allPermissions.add(PERMISSIONS.RESET_PASSWORD);
+      allPermissions.add(PERMISSIONS.CREATE_ASSET);
+      allPermissions.add(PERMISSIONS.UPDATE_ASSET);
+      allPermissions.add(PERMISSIONS.DELETE_ASSET);
+      allPermissions.add(PERMISSIONS.ASSIGN_ASSET);
+      allPermissions.add(PERMISSIONS.CREATE_PRODUCT);
+      allPermissions.add(PERMISSIONS.EDIT_PRODUCT);
+      allPermissions.add(PERMISSIONS.DELETE_PRODUCT);
+      setEditPermissions(Array.from(allPermissions));
+      return;
+    }
+
+    setEditPermissions([]);
+  }
+
+  const pageNumbers = Array.from({ length: totalPages }, (_, index) => index + 1);
+  const isEditingLockedSuperAdmin = editingUser?.role === ROLES.SUPER_ADMIN;
 
   if (loading) {
     return <div className="page-message">Loading users...</div>;
@@ -487,194 +339,46 @@ export function UsersPage() {
       {loadError ? <div className="page-message error">{loadError}</div> : null}
 
       <SectionCard
-        title="User Management"
-        subtitle="Create accounts, manage roles, and control account status with super-admin-only actions."
-        actions={<span className="role-chip">Permission-aware</span>}
-      >
-        {canCreateUser ? (
-        <form className="users-create-form" onSubmit={handleCreate}>
-          <div className="users-create-grid">
-            <div className="users-form-card">
-              <div className="users-form-card-header">
-                <strong>Basic Info</strong>
-                <span className="table-subtle">Account identity</span>
-              </div>
-              <div className="users-form-card-body users-two-col">
-                <label className="field-stack">
-                  <span>First Name</span>
-                  <input
-                    className="input"
-                    value={createForm.firstName}
-                    onChange={(event) => setCreateForm({ ...createForm, firstName: event.target.value })}
-                    required
-                  />
-                </label>
-                <label className="field-stack">
-                  <span>Last Name</span>
-                  <input
-                    className="input"
-                    value={createForm.lastName}
-                    onChange={(event) => setCreateForm({ ...createForm, lastName: event.target.value })}
-                    required
-                  />
-                </label>
-                <label className="field-stack users-span-full">
-                  <span>Email</span>
-                  <input
-                    className="input"
-                    type="email"
-                    value={createForm.email}
-                    onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })}
-                    required
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="users-form-card">
-              <div className="users-form-card-header">
-                <strong>Role & Status</strong>
-                <span className="table-subtle">Controls access scope</span>
-              </div>
-              <div className="users-form-card-body users-two-col">
-                <label className="field-stack">
-                  <span>Role</span>
-                  <select
-                    className="input"
-                    value={createForm.role}
-                    onChange={(event) => {
-                      const nextRole = event.target.value;
-                      setCreateForm({ ...createForm, role: nextRole });
-                      if (nextRole === ROLES.ADMIN) {
-                        setCreateManageableRoles([ROLES.EMPLOYEE]);
-                      } else {
-                        setCreateManageableRoles([]);
-                      }
-                      if (isSuperAdmin) {
-                        setCreatePermissions(ROLE_DEFAULTS[nextRole]?.permissions || []);
-                      }
-                    }}
-                  >
-                    {roleOptions.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field-stack">
-                  <span>Status</span>
-                  <select
-                    className="input"
-                    value={createForm.status}
-                    onChange={(event) => setCreateForm({ ...createForm, status: event.target.value })}
-                  >
-                    <option value={USER_STATUSES.ACTIVE}>ACTIVE</option>
-                    <option value={USER_STATUSES.PAUSED}>PAUSED</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            {isSuperAdmin && createForm.role === ROLES.ADMIN ? (
-              <div className="users-form-card">
-                <div className="users-form-card-header">
-                  <strong>Manageable Roles</strong>
-                  <span className="table-subtle">What this admin can create/manage</span>
-                </div>
-                <div className="users-form-card-body">
-                  <div className="users-pill-row" role="group" aria-label="Manageable roles">
-                    {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => {
-                      const isOn = createManageableRoles.includes(role);
-                      return (
-                        <button
-                          key={role}
-                          className={isOn ? "users-pill is-on" : "users-pill"}
-                          type="button"
-                          onClick={() => {
-                            setCreateManageableRoles((current) => {
-                              if (current.includes(role)) return current.filter((r) => r !== role);
-                              return Array.from(new Set([...current, role]));
-                            });
-                          }}
-                          disabled={role === ROLES.SUPER_ADMIN}
-                        >
-                          <span className="users-pill-label">{role}</span>
-                          <span className="users-pill-mark">{isOn ? "✓" : "+"}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="table-subtle">SUPER_ADMIN is intentionally not assignable.</p>
-                </div>
-              </div>
-            ) : null}
-
-            {isSuperAdmin ? (
-              <div className="users-form-card users-span-full">
-                <div className="users-form-card-header">
-                  <strong>Permissions</strong>
-                  <span className="table-subtle">Fine-grained access overrides</span>
-                </div>
-                <div className="users-form-card-body">
-                  <PermissionGroupGrid
-                    selectedPermissions={createPermissions}
-                    onTogglePermission={toggleCreatePermission}
-                    onResetDefaults={() => setCreatePermissions(ROLE_DEFAULTS[createForm.role]?.permissions || [])}
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            <div className="users-form-card">
-              <div className="users-form-card-header">
-                <strong>Password</strong>
-                <span className="table-subtle">Set initial credentials</span>
-              </div>
-              <div className="users-form-card-body users-password-stack">
-                <button className="button ghost users-generate-btn" type="button" onClick={applyGeneratedPassword}>
-                  Generate Password
-                </button>
-                <PasswordField
-                  label="Password"
-                  value={createForm.password}
-                  onChange={(value) => setCreateForm({ ...createForm, password: value })}
-                  visible={showCreatePassword}
-                  onToggle={() => setShowCreatePassword((current) => !current)}
-                  error={createPasswordErrors.password}
-                />
-                <PasswordField
-                  label="Confirm Password"
-                  value={createForm.confirmPassword}
-                  onChange={(value) => setCreateForm({ ...createForm, confirmPassword: value })}
-                  visible={showCreateConfirm}
-                  onToggle={() => setShowCreateConfirm((current) => !current)}
-                  error={createPasswordErrors.confirmPassword}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="users-create-actions">
-            <button className="button users-create-submit with-spinner" type="submit" disabled={!createFormValid || busyKey === "create-user"}>
-              {busyKey === "create-user" ? <span className="button-spinner button-spinner-lg" aria-hidden /> : null}
-              <span>{busyKey === "create-user" ? "Creating..." : "Create User"}</span>
+        title="Users"
+        subtitle="Only active and paused accounts are shown here. Deleted users are soft removed."
+        actions={
+          canCreateUser ? (
+            <button className="button dark button-rect" type="button" onClick={() => navigate("/users/create")}>
+              Create User
             </button>
+          ) : (
+            <span className="role-chip">Permission-aware</span>
+          )
+        }
+      >
+        <div className="users-toolbar">
+          <div className="users-filters">
+            <label className="field-stack users-filter-field">
+              <span>Search</span>
+              <input
+                className="input"
+                type="search"
+                placeholder="Search by name or email"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+            </label>
+            <label className="field-stack users-filter-field">
+              <span>Role</span>
+              <select className="input" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+                {USER_ROLE_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <ActionFeedback
-            type={createFeedback.feedback?.type}
-            message={createFeedback.feedback?.message}
-            autoDismissMs={createFeedback.feedback?.autoDismissMs}
-            onClose={createFeedback.clear}
-            className="action-feedback-inline"
-          />
-        </form>
-        ) : (
-          <div className="page-message">You do not have permission to create users.</div>
-        )}
-      </SectionCard>
+          <div className="table-subtle users-results-count">
+            Showing {paginatedUsers.length} of {filteredUsers.length} users
+          </div>
+        </div>
 
-      <SectionCard title="Users" subtitle="Only active and paused accounts are shown here. Deleted users are soft removed.">
         <div className="table-wrap">
           <table className="table">
             <thead>
@@ -688,13 +392,12 @@ export function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.length ? (
-                users.map((targetUser) => {
+              {paginatedUsers.length ? (
+                paginatedUsers.map((targetUser) => {
                   const isSelf = String(targetUser._id) === String(currentUser?._id);
                   const isLockedSuperAdmin = targetUser.role === ROLES.SUPER_ADMIN;
                   const canPauseResume = !isSelf;
-                  const canDelete = !isSelf && !isLockedSuperAdmin;
-                  const canEditTarget = !isLockedSuperAdmin;
+                  const canDelete = !isSelf;
 
                   return (
                     <tr key={targetUser._id} className={highlightedUserId === targetUser._id ? "row-flash" : ""}>
@@ -702,12 +405,13 @@ export function UsersPage() {
                         <strong>
                           {targetUser.firstName} {targetUser.lastName}
                         </strong>
-                        <div className="table-subtle">{isLockedSuperAdmin ? "Locked super admin account" : targetUser.employeeCode || "No employee code"}</div>
+                        <div className="table-subtle">
+                          {isLockedSuperAdmin ? "Locked super admin account" : targetUser.employeeCode || "No employee code"}
+                        </div>
                       </td>
                       <td>{targetUser.email}</td>
                       <td>
                         <strong>{targetUser.role}</strong>
-                        {isLockedSuperAdmin ? <div className="table-subtle">Edit and delete are disabled</div> : null}
                       </td>
                       <td>
                         <span className={`user-status-badge ${targetUser.status === USER_STATUSES.PAUSED ? "is-paused" : "is-active"}`}>
@@ -722,68 +426,59 @@ export function UsersPage() {
                         <td>
                           <div className="row-feedback-slot">
                             <div className="users-row-actions">
-                              {canViewAssignedDevices ? (
-                                <button
-                                  className="button ghost button-rect button-sm"
-                                  type="button"
-                                  onClick={() => setDeviceViewerUser(targetUser)}
-                                >
-                                  View Devices
-                                </button>
-                              ) : null}
                               {canSeeUserActions ? (
-                          <ActionMenu
-                            label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
-                            items={[
-                              {
-                                id: "edit",
-                                label: "Edit User",
-                                icon: "✏️",
-                                hidden: !canEditUser || !canEditTarget,
-                                onClick: () => openEditModal(targetUser),
-                              },
-                              {
-                                id: "reset",
-                                label: "Reset Password",
-                                icon: "🔑",
-                                hidden: !canResetPassword,
-                                onClick: () => openResetModal(targetUser),
-                              },
-                              {
-                                id: "pauseResume",
-                                label: targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account",
-                                icon: targetUser.status === USER_STATUSES.PAUSED ? "▶" : "⏸",
-                                hidden: !canPauseResume || !canEditUser,
-                                onClick: () => handlePauseResume(targetUser),
-                              },
-                              {
-                                id: "delete",
-                                label: "Delete User",
-                                icon: "🗑️",
-                                hidden: !canDelete || !canDeleteUser,
-                                danger: true,
-                                onClick: () => {
-                                  deleteFeedback.clear();
-                                  setDeleteUserTarget(targetUser);
-                                },
-                              },
-                            ]}
-                          />
+                                <ActionMenu
+                                  label={`Actions for ${targetUser.firstName} ${targetUser.lastName}`}
+                                  items={[
+                                    {
+                                      id: "edit",
+                                      label: "Edit User",
+                                      icon: "E",
+                                      hidden: !canEditUser,
+                                      onClick: () => openEditModal(targetUser),
+                                    },
+                                    {
+                                      id: "reset",
+                                      label: "Reset Password",
+                                      icon: "R",
+                                      hidden: !canResetPassword,
+                                      onClick: () => openResetModal(targetUser),
+                                    },
+                                    {
+                                      id: "pauseResume",
+                                      label: targetUser.status === USER_STATUSES.PAUSED ? "Resume Account" : "Pause Account",
+                                      icon: targetUser.status === USER_STATUSES.PAUSED ? ">" : "||",
+                                      hidden: !canPauseResume || !canEditUser,
+                                      onClick: () => handlePauseResume(targetUser),
+                                    },
+                                    {
+                                      id: "delete",
+                                      label: "Delete User",
+                                      icon: "X",
+                                      hidden: !canDelete || !canDeleteUser,
+                                      danger: true,
+                                      onClick: () => {
+                                        deleteFeedback.clear();
+                                        setDeleteUserTarget(targetUser);
+                                      },
+                                    },
+                                  ]}
+                                />
                               ) : null}
                             </div>
-                          {activeRowFeedbackId === targetUser._id ? (
-                            <ActionFeedback
-                              type={rowFeedback.feedback?.type}
-                              message={rowFeedback.feedback?.message}
-                              autoDismissMs={rowFeedback.feedback?.autoDismissMs}
-                              onClose={() => {
-                                rowFeedback.clear();
-                                setActiveRowFeedbackId("");
-                              }}
-                              compact
-                              className="action-feedback-row"
-                            />
-                          ) : null}
+                            {activeRowFeedbackId === targetUser._id ? (
+                              <ActionFeedback
+                                type={rowFeedback.feedback?.type}
+                                message={rowFeedback.feedback?.message}
+                                autoDismissMs={rowFeedback.feedback?.autoDismissMs}
+                                onClose={() => {
+                                  rowFeedback.clear();
+                                  setActiveRowFeedbackId("");
+                                }}
+                                compact
+                                className="action-feedback-row"
+                              />
+                            ) : null}
                           </div>
                         </td>
                       ) : null}
@@ -798,6 +493,39 @@ export function UsersPage() {
             </tbody>
           </table>
         </div>
+
+        {filteredUsers.length > USERS_PER_PAGE ? (
+          <div className="users-pagination">
+            <button
+              className="button ghost button-rect button-sm"
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+            >
+              Prev
+            </button>
+            <div className="users-pagination-pages">
+              {pageNumbers.map((pageNumber) => (
+                <button
+                  key={pageNumber}
+                  className={pageNumber === currentPage ? "button dark button-rect button-sm" : "button ghost button-rect button-sm"}
+                  type="button"
+                  onClick={() => setCurrentPage(pageNumber)}
+                >
+                  {pageNumber}
+                </button>
+              ))}
+            </div>
+            <button
+              className="button ghost button-rect button-sm"
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
       </SectionCard>
 
       {editingUser ? (
@@ -847,19 +575,25 @@ export function UsersPage() {
               </label>
               <label className="field-stack">
                 <span>Role</span>
-                <select className="input" value={editForm.role} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
-                  {roleOptions.map((role) => (
+                <select
+                  className="input"
+                  value={editForm.role}
+                  onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}
+                  disabled={isEditingLockedSuperAdmin}
+                >
+                  {USER_ROLE_OPTIONS.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>
                   ))}
                 </select>
+                {isEditingLockedSuperAdmin ? <span className="table-subtle">SUPER_ADMIN role is locked.</span> : null}
               </label>
               {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
                 <div className="field-stack users-edit-section">
                   <span>Manageable Roles</span>
                   <div className="mini-list users-manageable-list">
-                    {[ROLES.ADMIN, ROLES.EMPLOYEE].map((role) => (
+                    {USER_ROLE_OPTIONS.map((role) => (
                       <label key={role} className="checkbox-label">
                         <input
                           type="checkbox"
@@ -868,10 +602,9 @@ export function UsersPage() {
                             const checked = event.target.checked;
                             setEditManageableRoles((current) => {
                               if (checked) return Array.from(new Set([...current, role]));
-                              return current.filter((r) => r !== role);
+                              return current.filter((value) => value !== role);
                             });
                           }}
-                          disabled={role === ROLES.SUPER_ADMIN}
                         />
                         {role}
                       </label>
@@ -889,11 +622,8 @@ export function UsersPage() {
                   onClick={() => setIsPermissionsOpen((open) => !open)}
                 >
                   <span className="users-edit-perm-accordion-title">Permissions</span>
-                  <span
-                    className={`users-edit-perm-accordion-arrow${isPermissionsOpen ? " is-open" : ""}`}
-                    aria-hidden
-                  >
-                    ▶
+                  <span className={`users-edit-perm-accordion-arrow${isPermissionsOpen ? " is-open" : ""}`} aria-hidden>
+                    &gt;
                   </span>
                 </button>
                 {isPermissionsOpen ? (
@@ -901,7 +631,7 @@ export function UsersPage() {
                     <EditPermissionSections
                       selectedPermissions={editPermissions}
                       onTogglePermission={toggleEditPermission}
-                      onResetDefaults={() => setEditPermissions(ROLE_DEFAULTS[editForm.role]?.permissions || [])}
+                      onToggleAll={toggleEditAllPermissions}
                     />
                   </div>
                 ) : null}

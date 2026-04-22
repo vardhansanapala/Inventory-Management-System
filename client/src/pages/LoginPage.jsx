@@ -13,7 +13,7 @@ export function LoginPage() {
   const nextPath = location.state?.from || "/";
 
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={nextPath} replace />;
   }
 
   async function handleSubmit(event) {

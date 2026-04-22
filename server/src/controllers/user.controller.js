@@ -89,9 +89,8 @@ async function listUsers(_req, res) {
     status: { $ne: USER_STATUSES.DELETED },
     isDeleted: false,
   }).sort({
-    role: 1,
-    firstName: 1,
-    lastName: 1,
+    updatedAt: -1,
+    _id: -1,
   });
 
   res.json(users.map(toPublicUser));
@@ -263,6 +262,10 @@ async function updateUser(req, res) {
     req.body.employeeCode !== undefined ? normalizeText(req.body.employeeCode) || undefined : user.employeeCode;
 
   if (req.body.role !== undefined) {
+    if (user.role === USER_ROLES.SUPER_ADMIN && req.body.role !== USER_ROLES.SUPER_ADMIN) {
+      throw new ApiError(400, "SUPER_ADMIN role cannot be changed");
+    }
+
     if (![USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE].includes(req.body.role)) {
       throw new ApiError(400, "Invalid role selected");
     }

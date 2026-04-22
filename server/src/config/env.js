@@ -11,7 +11,7 @@ module.exports = {
   publicApiBaseUrl:
     process.env.PUBLIC_API_BASE_URL || `http://localhost:${Number(process.env.PORT) || 4000}`,
   qrDeepLinkBaseUrl:
-    process.env.QR_DEEP_LINK_BASE_URL || "http://localhost:5173/scan",
+    process.env.QR_DEEP_LINK_BASE_URL || "http://localhost:5173/device-info?assetId=",
   awsRegion: process.env.AWS_REGION || "ap-south-1",
   awsS3Bucket: process.env.AWS_S3_BUCKET || "",
   awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || "",

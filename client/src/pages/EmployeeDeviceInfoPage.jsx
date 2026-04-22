@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { getMyAssets } from "../api/inventory";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
@@ -106,6 +107,8 @@ export function EmployeeDeviceTimelineEvent({ event, isLatest }) {
 }
 
 export function EmployeeDeviceInfoPage() {
+  const { assetId: routeAssetId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -141,6 +144,25 @@ export function EmployeeDeviceInfoPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const requestedAssetId = String(searchParams.get("assetId") || routeAssetId || "").trim().toUpperCase();
+    if (!requestedAssetId || loading || !assets.length) return;
+
+    const matchedAsset = assets.find(
+      (asset) => String(asset?.assetId || "").trim().toUpperCase() === requestedAssetId
+    );
+
+    if (matchedAsset) {
+      openAssetDetails(matchedAsset);
+    }
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("assetId");
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams, assets, loading, routeAssetId]);
 
   async function openAssetDetails(asset) {
     setDetailsLoading(true);

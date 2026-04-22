@@ -7,6 +7,10 @@ export function extractAssetId(value) {
 
   try {
     const url = new URL(text);
+    const assetFromQuery = url.searchParams.get("assetId");
+    if (assetFromQuery) {
+      return decodeURIComponent(assetFromQuery).trim().toUpperCase();
+    }
     const segments = url.pathname.split("/").filter(Boolean);
     const lastSegment = segments.at(-1);
 

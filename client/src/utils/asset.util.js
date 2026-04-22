@@ -5,5 +5,10 @@ export function getAssetId(asset) {
 }
 
 export function getAssetScanUrl(asset) {
-  return String(asset?.qrCode || asset?.qrDeepLink || "").trim();
+  const existing = String(asset?.qrCode || asset?.qrDeepLink || "").trim();
+  if (existing) return existing;
+
+  const assetId = getAssetId(asset);
+  if (!assetId || typeof window === "undefined") return "";
+  return `${window.location.origin}/device-info?assetId=${encodeURIComponent(assetId)}`;
 }

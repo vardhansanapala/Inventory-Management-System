@@ -162,6 +162,10 @@ function getCameraErrorMessage(error) {
   return error?.message || "Unable to start the camera. Manual Asset ID entry has been enabled.";
 }
 
+function digitsOnly(value) {
+  return String(value || "").replace(/\D+/g, "");
+}
+
 const emptySetupData = {
   products: [],
   locations: [],
@@ -235,6 +239,10 @@ function getActionValidationError(form, selectedAsset) {
 
   if (visibility.requiresAssignee && !form.assignedToId) {
     return "Select an assignee before assigning the device.";
+  }
+
+  if (form.action === ASSET_ACTIONS.ASSIGN_DEVICE && selectedAsset?.status === ASSET_STATUSES.SOLD) {
+    return "Sold devices cannot be assigned.";
   }
 
   if (visibility.requiresLocation && !form.locationId) {
@@ -325,6 +333,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const [flashRowId, setFlashRowId] = useState("");
   const [flashRowVariant, setFlashRowVariant] = useState("success");
   const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+  const [showCreateDeviceForm, setShowCreateDeviceForm] = useState(true);
   const searchDebounceRef = useRef(null);
   const previousSearchRef = useRef("");
   const incomingAssetId = incomingAsset?._id || "";
@@ -334,6 +343,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const canCreateAsset = hasPermission(currentUser, PERMISSIONS.CREATE_ASSET);
   const canUpdateAsset = hasPermission(currentUser, PERMISSIONS.UPDATE_ASSET);
   const canDeleteAsset = hasPermission(currentUser, PERMISSIONS.DELETE_ASSET);
+  const canAssignAsset = hasPermission(currentUser, PERMISSIONS.ASSIGN_ASSET);
   const canEditOrDeleteFromRegistry = canUpdateAsset || canDeleteAsset;
 
   const [editingAsset, setEditingAsset] = useState(null);
@@ -354,6 +364,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const selectedAssetIsSaleAction = actionFieldVisibility.isSale;
   const actionValidationError = getActionValidationError(actionForm, selectedAsset);
   const isActionFormValid = !actionValidationError && validActionOptions.includes(actionForm.action);
+  const canPerformSelectedAction = actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE ? canAssignAsset : canUpdateAsset;
   const currentActionLocationId = selectedAsset?.location?._id ? String(selectedAsset.location._id) : "";
   const targetActionLocation =
     selectedAssetRequiresLocation && actionForm.locationId
@@ -868,7 +879,11 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   }, [selectedAssetQrUrl, createdAssetQrUrl]);
 
   function handleCreateChange(event) {
-    setCreateForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+    const { name, value } = event.target;
+    setCreateForm((current) => ({
+      ...current,
+      [name]: name === "serialNumber" ? digitsOnly(value) : value,
+    }));
   }
 
   function openEditAssetModal(asset) {
@@ -887,13 +902,17 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     if (!editingAsset?._id) return;
 
     modalFeedback.clear();
+    if (editForm.serialNumber && !/^\d+$/.test(String(editForm.serialNumber))) {
+      modalFeedback.showError("Serial Number must contain digits only.");
+      return;
+    }
     const editKey = `edit-asset:${editingAsset._id}`;
     setBusyKey(editKey);
 
     try {
       await updateAsset(editingAsset._id, {
         productId: editForm.productId || null,
-        serialNumber: editForm.serialNumber || "",
+        serialNumber: digitsOnly(editForm.serialNumber) || "",
         locationId: editForm.locationId || null,
         assignedToId: editForm.assignedToId || null,
         status: editForm.status,
@@ -956,11 +975,16 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     createFeedback.clear();
 
     try {
+      if (createForm.serialNumber && !/^\d+$/.test(String(createForm.serialNumber))) {
+        createFeedback.showError("Serial Number must contain digits only.", { global: true });
+        return;
+      }
       setBusyKey("create-device");
       const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
       setLatestCreatedAsset(createdAsset);
       createFeedback.showSuccess(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`, { global: true });
       setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+      setShowCreateDeviceForm(false);
       await loadAssets(buildAssetListFilters());
       await handleSelectAsset(createdAsset._id);
     } catch (err) {
@@ -999,6 +1023,11 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
   async function submitAction(event) {
     event.preventDefault();
+
+    if (!canPerformSelectedAction) {
+      workflowFeedback.showError(actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE ? "Missing permission: ASSIGN_ASSET" : "Missing permission: UPDATE_ASSET");
+      return;
+    }
 
     if (!selectedAssetId) {
       workflowFeedback.showError("Select a device first. The action form only works on the selected device.");
@@ -1216,12 +1245,21 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
         <SectionCard title="Create Device" subtitle="Create a physical asset and immediately preview its QR in the same section">
           <div className="assets-two-col">
             <SectionCard title="Device details" subtitle="Fill the fields, then create the device.">
+              {showCreateDeviceForm ? (
               <form className="form-grid wide-grid" onSubmit={submitAsset}>
               <select className="input" name="productId" value={createForm.productId} onChange={handleCreateChange} required>
                 <option value="">Select SKU</option>
                 {setupData.products.map((product) => <option key={product._id} value={product._id}>{product.sku} - {product.brand} {product.model}</option>)}
               </select>
-              <input className="input" name="serialNumber" placeholder="Serial Number" value={createForm.serialNumber} onChange={handleCreateChange} />
+              <input
+                className="input"
+                name="serialNumber"
+                placeholder="Serial Number"
+                value={createForm.serialNumber}
+                onChange={handleCreateChange}
+                inputMode="numeric"
+                pattern="[0-9]*"
+              />
               <select className="input" name="locationId" value={createForm.locationId} onChange={handleCreateChange} required>
                 <option value="">Initial Location</option>
                 {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
@@ -1242,6 +1280,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                 </button>
               </div>
               </form>
+              ) : (
+                <div className="page-stack">
+                  <div className="page-message success">Device created. You can review its QR and details on the right.</div>
+                  <button
+                    className="button dark button-rect"
+                    type="button"
+                    onClick={() => {
+                      setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+                      setShowCreateDeviceForm(true);
+                      createFeedback.clear();
+                    }}
+                  >
+                    Create Another Device
+                  </button>
+                </div>
+              )}
               <ActionFeedback
                 type={createFeedback.feedback?.type}
                 message={createFeedback.feedback?.message}
@@ -1275,7 +1329,9 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
             <SectionCard title="Select Device" subtitle="Scan a QR code or enter an Asset ID to target actions.">
               <div className="assign-selector">
               <div className="mode-toggle" role="tablist" aria-label="Device selection mode">
+                {!selectedAsset ? (
                 <button type="button" className={assignMode === "scan" ? "button dark" : "button ghost"} onClick={startScanner}>Scan QR</button>
+                ) : null}
                 <button
                   type="button"
                   className={assignMode === "manual" ? "button dark" : "button ghost"}
@@ -1316,7 +1372,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                 className="action-feedback-inline"
               />
 
-              {assignMode === "scan" ? (
+              {assignMode === "scan" && !selectedAsset ? (
                 <div className="scan-mode-panel">
                   <div className="scan-reader scan-video-shell">
                     {scanEngine === "native" ? (
@@ -1382,6 +1438,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     className="action-fieldset"
                     disabled={
                       !selectedAsset ||
+                      !canPerformSelectedAction ||
                       !validActionOptions.length ||
                       (Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}`)
                     }
@@ -1393,6 +1450,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
                     {!selectedAsset ? <div className="action-hint">Choose a device first. Actions apply only to the selected device.</div> : null}
                     {selectedAsset && !validActionOptions.length ? <div className="action-hint">No transitions are available for the current status.</div> : null}
+                    {selectedAsset && !canPerformSelectedAction ? (
+                      <div className="action-hint">
+                        {actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE
+                          ? "You do not have ASSIGN_ASSET permission for this action."
+                          : "You do not have UPDATE_ASSET permission for this action."}
+                      </div>
+                    ) : null}
                     {selectedAsset && validActionOptions.length && actionValidationError ? <div className="action-hint">{actionValidationError}</div> : null}
 
                     <select className="input" name="action" value={actionForm.action} onChange={handleActionChange} required>
@@ -1475,6 +1539,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                       type="submit"
                       disabled={
                         !selectedAsset ||
+                        !canPerformSelectedAction ||
                         !validActionOptions.length ||
                         !isActionFormValid ||
                         (Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}`)
@@ -1546,7 +1611,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
             <label className="field-stack">
               <span>Serial Number</span>
-              <input className="input" value={editForm.serialNumber} onChange={(event) => setEditForm((c) => ({ ...c, serialNumber: event.target.value }))} />
+              <input
+                className="input"
+                value={editForm.serialNumber}
+                onChange={(event) => setEditForm((c) => ({ ...c, serialNumber: digitsOnly(event.target.value) }))}
+                inputMode="numeric"
+                pattern="[0-9]*"
+              />
             </label>
 
             <label className="field-stack">

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getAssetDetails, getAssets } from "../api/inventory";
+import { useParams, useSearchParams } from "react-router-dom";
+import { getAssetById, getAssetDetails, getAssets } from "../api/inventory";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
@@ -118,6 +119,8 @@ function HistoryEvent({ event, isLatest = false }) {
 }
 
 export function DeviceInfoPage() {
+  const { assetId: routeAssetId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -182,6 +185,36 @@ export function DeviceInfoPage() {
   useEffect(() => {
     fetchAssets();
   }, [page, search]);
+
+  useEffect(() => {
+    const requestedAssetId = String(searchParams.get("assetId") || routeAssetId || "").trim();
+    if (!requestedAssetId) return;
+
+    let isCancelled = false;
+
+    async function consumeAssetIdFromUrl() {
+      try {
+        const asset = await getAssetById(requestedAssetId);
+        if (!isCancelled && asset) {
+          await openDetails(asset);
+        }
+      } finally {
+        if (!isCancelled) {
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete("assetId");
+            return next;
+          }, { replace: true });
+        }
+      }
+    }
+
+    consumeAssetIdFromUrl();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [searchParams, setSearchParams, routeAssetId]);
 
   async function openDetails(asset) {
     const assetId = asset?._id || asset?.assetId;

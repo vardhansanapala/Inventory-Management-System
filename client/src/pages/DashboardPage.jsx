@@ -58,7 +58,7 @@ export function DashboardPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Recent Audit Activity" subtitle="Latest inventory movement trail">
+      {/* <SectionCard title="Recent Audit Activity" subtitle="Latest inventory movement trail">
         <div className="table-wrap">
           <table className="table">
             <thead>
@@ -85,7 +85,7 @@ export function DashboardPage() {
             </tbody>
           </table>
         </div>
-      </SectionCard>
+      </SectionCard> */}
     </div>
   );
 }

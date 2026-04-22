@@ -129,6 +129,9 @@ async function applyAssetAction({
   // Pre-condition checks to prevent no-op / duplicate actions.
   // These run before any writes/log creation so we avoid unnecessary DB work.
   if (action === ASSET_ACTIONS.ASSIGN_DEVICE) {
+    if (String(fromStatus || "") === ASSET_STATUSES.SOLD) {
+      throw new ApiError(400, "Sold devices cannot be assigned.");
+    }
     const currentAssigneeId = fromAssignee ? String(fromAssignee) : "";
     const nextAssigneeId = refs.assignedTo?._id ? String(refs.assignedTo._id) : "";
     if (currentAssigneeId && nextAssigneeId && currentAssigneeId === nextAssigneeId) {

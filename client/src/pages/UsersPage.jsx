@@ -21,14 +21,13 @@ import {
   USER_STATUSES,
   emptyEditForm,
   emptyPasswordForm,
-  formatTimestamp,
   getPasswordErrors,
-  sortUsersByUpdatedAtDesc,
 } from "../components/users/UserManagementShared";
 import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
+import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
 
 const USERS_PER_PAGE = 10;
 
@@ -45,7 +44,9 @@ export function UsersPage() {
   const [busyKey, setBusyKey] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
+  const [sort, setSort] = useState("latest");
   const [currentPage, setCurrentPage] = useState(1);
+  const [, forceRelativeRefresh] = useState(0);
   const [activeRowFeedbackId, setActiveRowFeedbackId] = useState("");
   const [highlightedUserId, setHighlightedUserId] = useState("");
   const rowFlashTimeoutRef = useRef(null);
@@ -82,6 +83,13 @@ export function UsersPage() {
     return passwordForm.password.length >= 6 && passwordForm.password === passwordForm.confirmPassword;
   }, [passwordForm]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      forceRelativeRefresh((value) => value + 1);
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const filteredUsers = useMemo(() => {
     const normalizedSearch = searchInput.trim().toLowerCase();
 
@@ -93,8 +101,14 @@ export function UsersPage() {
       ? searchFiltered
       : searchFiltered.filter((targetUser) => targetUser.role === roleFilter);
 
-    return sortUsersByUpdatedAtDesc(roleFiltered);
-  }, [users, searchInput, roleFilter]);
+    const sorted = [...roleFiltered].sort((left, right) => {
+      const leftTime = getSortableTime(getLastUpdatedValue(left));
+      const rightTime = getSortableTime(getLastUpdatedValue(right));
+      return sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
+    });
+
+    return sorted;
+  }, [users, searchInput, roleFilter, sort]);
 
   const totalPages = Math.max(1, Math.ceil(filteredUsers.length / USERS_PER_PAGE));
   const paginatedUsers = useMemo(() => {
@@ -124,7 +138,7 @@ export function UsersPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchInput, roleFilter]);
+  }, [searchInput, roleFilter, sort]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -373,6 +387,13 @@ export function UsersPage() {
                 ))}
               </select>
             </label>
+            <label className="field-stack users-filter-field">
+              <span>Sort</span>
+              <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
+                <option value="latest">Latest</option>
+                <option value="oldest">Oldest</option>
+              </select>
+            </label>
           </div>
           <div className="table-subtle users-results-count">
             Showing {paginatedUsers.length} of {filteredUsers.length} users
@@ -398,9 +419,17 @@ export function UsersPage() {
                   const isLockedSuperAdmin = targetUser.role === ROLES.SUPER_ADMIN;
                   const canPauseResume = !isSelf;
                   const canDelete = !isSelf;
+                  const updatedTime = getSortableTime(getLastUpdatedValue(targetUser));
+                  const isRecentlyUpdated = updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000;
 
                   return (
-                    <tr key={targetUser._id} className={highlightedUserId === targetUser._id ? "row-flash" : ""}>
+                    <tr
+                      key={targetUser._id}
+                      className={[
+                        highlightedUserId === targetUser._id ? "row-flash" : "",
+                        isRecentlyUpdated ? "row-recent" : "",
+                      ].join(" ").trim()}
+                    >
                       <td>
                         <strong>
                           {targetUser.firstName} {targetUser.lastName}
@@ -418,9 +447,10 @@ export function UsersPage() {
                           {targetUser.status || USER_STATUSES.ACTIVE}
                         </span>
                       </td>
-                      <td>
-                        <strong>{formatTimestamp(targetUser.updatedAt)}</strong>
-                        <div className="table-subtle">Created {formatTimestamp(targetUser.createdAt)}</div>
+                      <td className="table-date">
+                        <span title={getFullDateTime(getLastUpdatedValue(targetUser))}>
+                          {getRelativeTime(getLastUpdatedValue(targetUser))}
+                        </span>
                       </td>
                       {showUserActionsColumn ? (
                         <td>
@@ -532,7 +562,7 @@ export function UsersPage() {
         <Modal
           className="users-edit-modal"
           title="Edit User"
-          subtitle={`Email is fixed for ${editingUser.email} | Last updated ${formatTimestamp(editingUser.updatedAt)}`}
+          subtitle={`Email is fixed for ${editingUser.email} | Last updated ${getRelativeTime(getLastUpdatedValue(editingUser))}`}
           onClose={() => setEditingUser(null)}
           feedback={
             <ActionFeedback

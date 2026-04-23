@@ -34,6 +34,7 @@ import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
 import { getAssetId, getAssetLocationLabel, getAssetScanUrl, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
+import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
 import { extractAssetId } from "../utils/qrParser.util";
 const sectionTabs = [
   { id: "registry", title: "Device Registry", subtitle: "Browse and select devices" },
@@ -474,6 +475,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("latest");
+  const [, forceRelativeRefresh] = useState(0);
   const [statusFilter, setStatusFilter] = useState(() => {
     const nextStatus = searchParams.get("status") || "";
     return isVisibleAssetStatus(nextStatus) ? nextStatus : "";
@@ -950,6 +953,13 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   }, []);
 
   useEffect(() => {
+    const id = window.setInterval(() => {
+      forceRelativeRefresh((value) => value + 1);
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     window.clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = window.setTimeout(() => {
       const nextSearch = searchInput.trim();
@@ -976,6 +986,14 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   useEffect(() => {
     loadAssets(buildAssetListFilters());
   }, [search, statusFilter]);
+
+  const sortedAssets = useMemo(() => {
+    return [...assets].sort((left, right) => {
+      const leftTime = getSortableTime(getLastUpdatedValue(left));
+      const rightTime = getSortableTime(getLastUpdatedValue(right));
+      return sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
+    });
+  }, [assets, sort]);
 
   useEffect(() => {
     if (!pendingConsumeAssetId) return;
@@ -1334,6 +1352,10 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
                 />
+                <select className="input" value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort assets">
+                  <option value="latest">Latest</option>
+                  <option value="oldest">Oldest</option>
+                </select>
               </div>
             </div>
           }
@@ -1347,17 +1369,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                   <th>Status</th>
                   <th>Location</th>
                   <th>Assignee</th>
+                  <th>Last Updated</th>
                   {canEditOrDeleteFromRegistry ? <th>Actions</th> : null}
                   <th>Select</th>
                 </tr>
               </thead>
               <tbody>
-                {assets.length ? assets.map((asset) => (
+                {sortedAssets.length ? sortedAssets.map((asset) => (
                   <tr
                     key={asset._id}
                     className={[
                       selectedAssetId === asset._id ? "selected-row" : "",
                       flashRowId === asset._id ? `row-flash ${flashRowVariant === "error" ? "is-error" : ""}` : "",
+                      (() => {
+                        const updatedTime = getSortableTime(getLastUpdatedValue(asset));
+                        return updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000 ? "row-recent" : "";
+                      })(),
                     ].join(" ").trim()}
                     onClick={() => handleSelectAsset(asset._id)}
                   >
@@ -1369,6 +1396,11 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     <td><StatusPill status={asset.status} /></td>
                     <td>{getAssetLocationLabel(asset)}</td>
                     <td>{asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "-"}</td>
+                    <td className="table-date">
+                      <span title={getFullDateTime(getLastUpdatedValue(asset))}>
+                        {getRelativeTime(getLastUpdatedValue(asset))}
+                      </span>
+                    </td>
                     {canEditOrDeleteFromRegistry ? (
                       <td onClick={(event) => event.stopPropagation()}>
                         <ActionMenu
@@ -1411,7 +1443,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={canEditOrDeleteFromRegistry ? 7 : 6}>No results found</td>
+                    <td colSpan={canEditOrDeleteFromRegistry ? 8 : 7}>No results found</td>
                   </tr>
                 )}
               </tbody>

@@ -39,6 +39,15 @@ export function sortItemsLatestFirst(items) {
   });
 }
 
+export function sortItemsByLastUpdated(items, sort = "latest") {
+  const direction = sort === "oldest" ? 1 : -1;
+  return [...items].sort((left, right) => {
+    const leftTime = getSortableTime(left);
+    const rightTime = getSortableTime(right);
+    return direction * (leftTime - rightTime);
+  });
+}
+
 function getSortableTime(item) {
   const parsed = new Date(item?.updatedAt || item?.createdAt || 0).getTime();
   return Number.isNaN(parsed) ? 0 : parsed;

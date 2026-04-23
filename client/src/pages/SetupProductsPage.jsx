@@ -11,11 +11,12 @@ import {
   SetupToolbar,
   SETUP_PAGE_SIZE,
   getEmptyMessage,
-  sortItemsLatestFirst,
+  sortItemsByLastUpdated,
   useDebouncedValue,
   useSetupPageContext,
 } from "../components/setup/SetupShared";
 import { useActionFeedback } from "../hooks/useActionFeedback";
+import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
 
 export function SetupProductsPage() {
   const navigate = useNavigate();
@@ -24,7 +25,9 @@ export function SetupProductsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [brandFilter, setBrandFilter] = useState("ALL");
+  const [sort, setSort] = useState("latest");
   const [currentPage, setCurrentPage] = useState(1);
+  const [, forceRelativeRefresh] = useState(0);
   const [highlightedRowId, setHighlightedRowId] = useState("");
   const flashTimeoutRef = useRef(null);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -40,13 +43,20 @@ export function SetupProductsPage() {
   const deleteFeedback = useActionFeedback();
   const debouncedSearch = useDebouncedValue(searchInput, 300);
 
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      forceRelativeRefresh((value) => value + 1);
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => () => {
     window.clearTimeout(flashTimeoutRef.current);
   }, []);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, categoryFilter, brandFilter]);
+  }, [debouncedSearch, categoryFilter, brandFilter, sort]);
 
   function flashRow(rowId) {
     if (!rowId) return;
@@ -117,8 +127,8 @@ export function SetupProductsPage() {
       ? categoryFiltered
       : categoryFiltered.filter((product) => String(product.brand || "").trim() === brandFilter);
 
-    return sortItemsLatestFirst(brandFiltered);
-  }, [brandFilter, categoryFilter, debouncedSearch, setupData.products]);
+    return sortItemsByLastUpdated(brandFiltered, sort);
+  }, [brandFilter, categoryFilter, debouncedSearch, setupData.products, sort]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / SETUP_PAGE_SIZE));
   const paginatedProducts = useMemo(() => {
@@ -136,9 +146,17 @@ export function SetupProductsPage() {
     { key: "model", header: "Model" },
     { key: "category", header: "Category", render: (row) => row.category?.name || "-" },
     {
-      key: "updatedAt",
+      key: "lastUpdated",
       header: "Last Updated",
-      render: (row) => <span className="table-subtle">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "-"}</span>,
+      className: "table-date",
+      render: (row) => {
+        const date = getLastUpdatedValue(row);
+        return (
+          <span title={getFullDateTime(date)}>
+            {getRelativeTime(date)}
+          </span>
+        );
+      },
     },
     {
       key: "actions",
@@ -217,6 +235,13 @@ export function SetupProductsPage() {
                 ))}
               </select>
             </label>
+            <label className="field-stack setup-filter-field">
+              <span>Sort</span>
+              <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
+                <option value="latest">Latest</option>
+                <option value="oldest">Oldest</option>
+              </select>
+            </label>
           </>
         }
         summary={`Showing ${paginatedProducts.length} of ${filteredProducts.length} products`}
@@ -231,7 +256,13 @@ export function SetupProductsPage() {
         columns={productsColumns}
         rows={paginatedProducts.map((product) => ({ ...product, key: product._id }))}
         emptyMessage={emptyMessage}
-        getRowClassName={(row) => (highlightedRowId === row._id ? "row-flash" : "")}
+        getRowClassName={(row) => {
+          const classNames = [];
+          if (highlightedRowId === row._id) classNames.push("row-flash");
+          const updatedTime = getSortableTime(getLastUpdatedValue(row));
+          if (updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000) classNames.push("row-recent");
+          return classNames.join(" ");
+        }}
       />
 
       <SetupPagination currentPage={currentPage} totalItems={filteredProducts.length} onPageChange={setCurrentPage} />

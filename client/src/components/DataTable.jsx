@@ -14,7 +14,9 @@ export function DataTable({ columns, rows, emptyMessage = "No records found.", g
             rows.map((row, rowIndex) => (
               <tr key={row.key || rowIndex} className={getRowClassName ? getRowClassName(row) : ""}>
                 {columns.map((column) => (
-                  <td key={column.key}>{typeof column.render === "function" ? column.render(row) : row[column.key]}</td>
+                  <td key={column.key} className={column.className || ""}>
+                    {typeof column.render === "function" ? column.render(row) : row[column.key]}
+                  </td>
                 ))}
               </tr>
             ))

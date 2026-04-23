@@ -7,6 +7,7 @@ import { getDisplayAssetStatus } from "../constants/assetWorkflow";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 import { getAssetId, getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
+import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
 import {
   EmployeeDeviceTimelineEvent,
   getEmployeeDeviceName,
@@ -47,6 +48,8 @@ export function DevicesPage() {
   const [locations, setLocations] = useState([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("latest");
+  const [, forceRelativeRefresh] = useState(0);
   const [selectedUserId, setSelectedUserId] = useState("ALL");
   const [selectedLocationId, setSelectedLocationId] = useState("ALL");
   const [selectedAsset, setSelectedAsset] = useState(null);
@@ -69,6 +72,13 @@ export function DevicesPage() {
 
     return () => window.clearTimeout(debounceRef.current);
   }, [searchInput]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      forceRelativeRefresh((value) => value + 1);
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const loadAssignedDevices = useCallback(async () => {
     setListLoading(true);
@@ -149,11 +159,11 @@ export function DevicesPage() {
       : userFiltered.filter((asset) => String(asset?.location?._id || "") === selectedLocationId);
 
     return [...locationFiltered].sort((left, right) => {
-      const leftTime = new Date(left?.updatedAt || left?.createdAt || 0).getTime();
-      const rightTime = new Date(right?.updatedAt || right?.createdAt || 0).getTime();
-      return rightTime - leftTime;
+      const leftTime = getSortableTime(getLastUpdatedValue(left));
+      const rightTime = getSortableTime(getLastUpdatedValue(right));
+      return sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
     });
-  }, [assets, search, selectedLocationId, selectedUserId]);
+  }, [assets, search, selectedLocationId, selectedUserId, sort]);
 
   useEffect(() => {
     const id = selectedAsset?._id;
@@ -215,6 +225,13 @@ export function DevicesPage() {
             onChange={(event) => setSearchInput(event.target.value)}
             aria-label="Search assigned devices"
           />
+          <label className="field-stack devices-filter-field">
+            <span>Sort</span>
+            <select className="input" value={sort} onChange={(event) => setSort(event.target.value)}>
+              <option value="latest">Latest</option>
+              <option value="oldest">Oldest</option>
+            </select>
+          </label>
           {!isEmployee ? (
             <label className="field-stack devices-filter-field">
               <span>User</span>
@@ -254,12 +271,20 @@ export function DevicesPage() {
                   <th>Assigned To</th>
                   <th>Location</th>
                   <th>Status</th>
+                  <th>Last Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredAssets.length ? (
                   filteredAssets.map((asset) => (
-                    <tr key={asset._id} className="devices-row" onClick={() => setSelectedAsset(asset)}>
+                    <tr
+                      key={asset._id}
+                      className={(() => {
+                        const updatedTime = getSortableTime(getLastUpdatedValue(asset));
+                        return ["devices-row", updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000 ? "row-recent" : ""].join(" ").trim();
+                      })()}
+                      onClick={() => setSelectedAsset(asset)}
+                    >
                       <td>
                         <strong>{getAssetId(asset) || "-"}</strong>
                       </td>
@@ -269,11 +294,16 @@ export function DevicesPage() {
                       <td>
                         <StatusPill status={asset.status} />
                       </td>
+                      <td className="table-date">
+                        <span title={getFullDateTime(getLastUpdatedValue(asset))}>
+                          {getRelativeTime(getLastUpdatedValue(asset))}
+                        </span>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5}>{search || selectedUserId !== "ALL" || selectedLocationId !== "ALL" ? "No assigned devices match your filters." : "No assigned devices found."}</td>
+                    <td colSpan={6}>{search || selectedUserId !== "ALL" || selectedLocationId !== "ALL" ? "No assigned devices match your filters." : "No assigned devices found."}</td>
                   </tr>
                 )}
               </tbody>

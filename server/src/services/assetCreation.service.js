@@ -13,9 +13,16 @@ function isDuplicateAssetIdError(error) {
   return error?.code === 11000 && (error?.keyPattern?.assetId || error?.keyValue?.assetId);
 }
 
-async function assertCreationRefs({ productId, locationId, assignedToId, performedById, session }) {
+function normalizeLocationType(value) {
+  return String(value || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+}
+
+async function assertCreationRefs({ productId, locationId, locationType, assignedToId, performedById, session }) {
   const product = await Product.findOne({ _id: productId, isDeleted: false }).session(session);
-  const location = await Location.findOne({ _id: locationId, isDeleted: false }).session(session);
+  const normalizedLocationType = normalizeLocationType(locationType);
+  const location = normalizedLocationType === "PHYSICAL" && locationId
+    ? await Location.findOne({ _id: locationId, isDeleted: false }).session(session)
+    : null;
   const assignedTo = assignedToId
     ? await User.findOne({ _id: assignedToId, isDeleted: false }).session(session)
     : null;
@@ -25,7 +32,7 @@ async function assertCreationRefs({ productId, locationId, assignedToId, perform
     throw new ApiError(400, "Invalid product reference");
   }
 
-  if (!location) {
+  if (normalizedLocationType === "PHYSICAL" && !location) {
     throw new ApiError(400, "Invalid location reference");
   }
 
@@ -37,7 +44,7 @@ async function assertCreationRefs({ productId, locationId, assignedToId, perform
     throw new ApiError(400, "Invalid actor reference");
   }
 
-  return { product, location, assignedTo, performedBy };
+  return { product, location, assignedTo, performedBy, locationType: normalizedLocationType };
 }
 
 async function buildAssetQrFields(assetId) {
@@ -91,19 +98,37 @@ async function createAssetWithQr({
   await assertCreationRefs({
     productId: payload.productId,
     locationId: payload.locationId,
+    locationType: payload.locationType,
     assignedToId: payload.assignedToId,
     performedById,
     session,
   });
 
+  const locationType = normalizeLocationType(payload.locationType);
+  const wfhAddress = locationType === "WFH" ? String(payload.wfhAddress || "").trim() : "";
+
+  if (locationType === "WFH" && !wfhAddress) {
+    throw new ApiError(400, "wfhAddress is required when locationType is WFH");
+  }
+
+  if (locationType === "PHYSICAL" && !payload.locationId) {
+    throw new ApiError(400, "locationId is required when locationType is PHYSICAL");
+  }
+
   const asset = new Asset({
     product: payload.productId,
     serialNumber: payload.serialNumber || null,
     status: payload.status || (payload.assignedToId ? ASSET_STATUSES.ASSIGNED : ASSET_STATUSES.AVAILABLE),
-    location: payload.locationId,
+    location: locationType === "WFH" ? null : payload.locationId,
+    locationType,
+    wfhAddress,
     assignedTo: payload.assignedToId || null,
     purchaseDate: payload.purchaseDate || null,
-    metadata: payload.metadata || {},
+    metadata: {
+      ...(payload.metadata || {}),
+      locationType,
+      wfhAddress,
+    },
     lastActionAt: new Date(),
   });
 

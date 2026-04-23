@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAssetsByUser } from "../api/inventory";
+import { getDisplayAssetStatus } from "../constants/assetWorkflow";
 import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { Modal } from "./Modal";
 import { StatusPill } from "./StatusPill";
@@ -209,7 +210,7 @@ export function UserAssignedAssetsModal({ currentUser, targetUser, onClose }) {
               </div>
               <div className="device-info-kv">
                 <span>Status</span>
-                <strong>{selectedAsset.status || "-"}</strong>
+                <strong>{getDisplayAssetStatus(selectedAsset.status)}</strong>
               </div>
               <div className="device-info-kv">
                 <span>Location</span>

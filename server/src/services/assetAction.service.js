@@ -6,7 +6,7 @@ const { Location } = require("../models/Location");
 const { MaintenanceRecord } = require("../models/MaintenanceRecord");
 const { User } = require("../models/User");
 const { ApiError } = require("../utils/ApiError");
-const { buildTransition, resolveActionReason } = require("./assetState.service");
+const { buildTransition, getAssetLocationType, getAssetWfhAddress, normalizeAction, resolveActionReason } = require("./assetState.service");
 
 async function findAssetForAction(assetIdentifier, session) {
   const normalizedIdentifier = String(assetIdentifier || "").trim().toUpperCase();
@@ -114,6 +114,7 @@ async function applyAssetAction({
   }
 
   const asset = await findAssetForAction(assetIdentifier, session);
+  const normalizedAction = normalizeAction(action);
   const refs = await resolveActionRefs({
     locationId,
     assignedToId,
@@ -122,13 +123,15 @@ async function applyAssetAction({
   });
 
   const fromStatus = asset.status;
-  const normalizedReason = resolveActionReason(action, reason);
+  const normalizedReason = resolveActionReason(normalizedAction, reason);
   const fromLocation = asset.location;
   const fromAssignee = asset.assignedTo;
+  const fromLocationType = getAssetLocationType(asset);
+  const fromWfhAddress = getAssetWfhAddress(asset);
 
   // Pre-condition checks to prevent no-op / duplicate actions.
   // These run before any writes/log creation so we avoid unnecessary DB work.
-  if (action === ASSET_ACTIONS.ASSIGN_DEVICE) {
+  if (normalizedAction === ASSET_ACTIONS.ASSIGN_DEVICE) {
     if (String(fromStatus || "") === ASSET_STATUSES.SOLD) {
       throw new ApiError(400, "Sold devices cannot be assigned.");
     }
@@ -139,16 +142,23 @@ async function applyAssetAction({
     }
   }
 
-  if (action === ASSET_ACTIONS.TRANSFER) {
+  if (normalizedAction === ASSET_ACTIONS.TRANSFER) {
     const currentLocationId = fromLocation ? String(fromLocation) : "";
     const nextLocationId = refs.location?._id ? String(refs.location._id) : "";
-    if (currentLocationId && nextLocationId && currentLocationId === nextLocationId) {
+    const requestedLocationType = String(payload.locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+    const requestedWfhAddress = String(payload.wfhAddress || "").trim();
+
+    if (requestedLocationType === "WFH") {
+      if (fromLocationType === "WFH" && fromWfhAddress && fromWfhAddress === requestedWfhAddress) {
+        throw new ApiError(400, "Asset is already in the target location.");
+      }
+    } else if (fromLocationType === "PHYSICAL" && currentLocationId && nextLocationId && currentLocationId === nextLocationId) {
       throw new ApiError(400, "Asset is already in the target location.");
     }
   }
   const transition = buildTransition({
     asset,
-    action,
+    action: normalizedAction,
     refs,
     payload,
     reason: normalizedReason,
@@ -160,14 +170,30 @@ async function applyAssetAction({
     const nextAssigneeId = transition.assignedTo ? String(transition.assignedTo) : "";
     const currentLocationId = fromLocation ? String(fromLocation) : "";
     const currentAssigneeId = fromAssignee ? String(fromAssignee) : "";
+    const nextLocationType = transition.locationType !== undefined
+      ? String(transition.locationType || "").trim().toUpperCase()
+      : fromLocationType;
+    const nextWfhAddress = transition.wfhAddress !== undefined
+      ? String(transition.wfhAddress || "").trim()
+      : fromWfhAddress;
+    const locationChanged = nextLocationId !== currentLocationId;
+    const assigneeChanged = nextAssigneeId !== currentAssigneeId;
+    const locationTypeChanged = nextLocationType !== fromLocationType;
+    const wfhAddressChanged = nextWfhAddress !== fromWfhAddress;
 
-    if (nextLocationId === currentLocationId && nextAssigneeId === currentAssigneeId) {
+    if (!locationChanged && !assigneeChanged && !locationTypeChanged && !wfhAddressChanged) {
       throw new ApiError(400, `Asset is already in status: ${nextStatus}`);
     }
   }
 
   asset.status = transition.status;
   asset.location = transition.location;
+  if (transition.locationType !== undefined) {
+    asset.locationType = transition.locationType;
+  }
+  if (transition.wfhAddress !== undefined) {
+    asset.wfhAddress = transition.wfhAddress;
+  }
   asset.assignedTo = transition.assignedTo;
   asset.metadata = {
     ...(asset.metadata || {}),
@@ -176,14 +202,14 @@ async function applyAssetAction({
   asset.lastActionAt = new Date();
   await asset.save({ session });
 
-  const maintenanceRecord = await upsertMaintenanceIfNeeded(asset, action, payload, session, fromStatus);
+  const maintenanceRecord = await upsertMaintenanceIfNeeded(asset, normalizedAction, payload, session, fromStatus);
 
   const [auditLog] = await AuditLog.create(
     [
       {
         asset: asset._id,
         assetId: asset.assetId,
-        action,
+        action: normalizedAction,
         reason: normalizedReason,
         customReason,
         performedBy: performedById,

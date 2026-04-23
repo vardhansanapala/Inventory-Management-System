@@ -916,9 +916,105 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.asset-reference-row.is-compact {
+  display: block;
+}
+
+.asset-reference-shell {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 46px;
+  width: min(100%, 640px);
+  padding: 0.35rem 0.4rem 0.35rem 0.75rem;
+  border: 1px solid rgba(122, 165, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(4, 9, 24, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.asset-reference-content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.asset-reference-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+}
+
+.asset-reference-feedback {
+  color: var(--success);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  opacity: 0;
+  transform: translateX(6px) scale(0.96);
+  transition: opacity 180ms ease, transform 220ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.asset-reference-feedback.is-visible {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+}
+
+.copy-icon-button {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 9px;
+  border: 1px solid rgba(122, 165, 255, 0.25);
+  background: rgba(9, 14, 34, 0.75);
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.copy-icon-button:hover:not(:disabled) {
+  border-color: rgba(87, 216, 255, 0.5);
+  background: rgba(87, 216, 255, 0.14);
+}
+
+.copy-icon-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.copy-icon-button.is-copied {
+  border-color: rgba(24, 226, 164, 0.5);
+  color: var(--success);
+  background: rgba(24, 226, 164, 0.14);
+}
+
+.copy-icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.asset-reference-copy-button {
+  flex: 0 0 auto;
+}
+
 .scan-url-input {
-  min-width: 280px;
+  min-width: 0;
   max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  box-shadow: none;
+  height: auto;
+}
+
+.scan-url-input:focus {
+  outline: none;
+  border: 0;
+  box-shadow: none;
 }
 
 .assets-two-col {
@@ -1004,11 +1100,25 @@ textarea:focus {
 }
 
 .asset-reference-row code {
-  background: rgba(4, 9, 24, 0.9);
-  border: 1px solid rgba(122, 165, 255, 0.2);
-  border-radius: 10px;
-  padding: 0.55rem 0.7rem;
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
   overflow-wrap: anywhere;
+  color: var(--text-main);
+}
+
+@media (max-width: 640px) {
+  .asset-reference-shell {
+    width: 100%;
+    gap: 0.45rem;
+    padding-right: 0.35rem;
+    padding-left: 0.65rem;
+  }
+
+  .asset-reference-feedback {
+    display: none;
+  }
 }
 
 .checkbox-label {

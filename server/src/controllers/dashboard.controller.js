@@ -5,7 +5,10 @@ const { MaintenanceRecord } = require("../models/MaintenanceRecord");
 
 async function getDashboardSummary(_req, res) {
   const [totalAssets, statusBreakdown, recentLogs, openRepairs] = await Promise.all([
-    Asset.countDocuments({ isDeleted: false }),
+    Asset.countDocuments({
+      isDeleted: false,
+      status: { $nin: [ASSET_STATUSES.SOLD, ASSET_STATUSES.LOST] },
+    }),
     Asset.aggregate([
       { $match: { isDeleted: false } },
       { $group: { _id: "$status", count: { $sum: 1 } } },

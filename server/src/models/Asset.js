@@ -32,8 +32,19 @@ const AssetSchema = new Schema(
     location: {
       type: Schema.Types.ObjectId,
       ref: "Location",
-      required: true,
+      default: null,
       index: true,
+    },
+    locationType: {
+      type: String,
+      enum: ["PHYSICAL", "WFH"],
+      default: "PHYSICAL",
+      index: true,
+    },
+    wfhAddress: {
+      type: String,
+      default: "",
+      trim: true,
     },
     assignedTo: {
       type: Schema.Types.ObjectId,

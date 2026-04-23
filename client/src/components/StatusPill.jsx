@@ -1,17 +1,15 @@
+import { getDisplayAssetStatus } from "../constants/assetWorkflow";
+
 export function StatusPill({ status }) {
-  const normalized = String(status || "");
-  const token = normalized.toLowerCase();
+  const normalized = getDisplayAssetStatus(status);
+  const token = normalized === "-" ? "unknown" : normalized.toLowerCase();
   const semantic =
     token === "available" ||
     token === "assigned" ||
-    token === "in_use" ||
-    token === "outside" ||
-    token === "sent_out" ||
     token === "rented_out" ||
-    token === "under_repair" ||
-    token === "reserved"
+    token === "under_repair"
       ? "primary"
-      : token === "sold" || token === "retired"
+      : token === "sold"
         ? "success"
         : token === "lost"
           ? "danger"

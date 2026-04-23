@@ -3,9 +3,10 @@ import { getAssetAuditLogs, getAssetsBootstrap, getAssetsByUser, getMyAssets } f
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
+import { getDisplayAssetStatus } from "../constants/assetWorkflow";
 import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
-import { getAssetId } from "../utils/asset.util";
+import { getAssetId, getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 import {
   EmployeeDeviceTimelineEvent,
   getEmployeeDeviceName,
@@ -20,7 +21,7 @@ function formatOwnerName(user) {
 }
 
 function getLocationName(asset) {
-  return asset?.location?.name || "-";
+  return getAssetLocationLabel(asset);
 }
 
 function getAssetSearchText(asset) {
@@ -316,9 +317,15 @@ export function DevicesPage() {
                 <span>Location</span>
                 <strong>{getLocationName(selectedAsset)}</strong>
               </div>
+              {isWfhLocation(selectedAsset) ? (
+                <div className="device-info-kv">
+                  <span>Address</span>
+                  <strong>{getAssetWfhAddress(selectedAsset) || "-"}</strong>
+                </div>
+              ) : null}
               <div className="device-info-kv">
                 <span>Status</span>
-                <strong>{selectedAsset.status || "-"}</strong>
+                <strong>{getDisplayAssetStatus(selectedAsset.status)}</strong>
               </div>
             </div>
 

@@ -4,6 +4,8 @@ import { getAssetById, getAssetDetails, getAssets } from "../api/inventory";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
+import { getDisplayAssetStatus } from "../constants/assetWorkflow";
+import { getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 
 const HISTORY_PREVIEW_COUNT = 5;
 
@@ -42,8 +44,8 @@ function buildChangeRows(event) {
   if (event.from?.status || event.to?.status) {
     rows.push({
       label: "Status",
-      from: event.from?.status || "-",
-      to: event.to?.status || "-",
+      from: getDisplayAssetStatus(event.from?.status),
+      to: getDisplayAssetStatus(event.to?.status),
     });
   }
 
@@ -310,7 +312,7 @@ export function DeviceInfoPage() {
                     <td>
                       <StatusPill status={asset.status} />
                     </td>
-                    <td>{asset.location?.name || "-"}</td>
+                    <td>{getAssetLocationLabel(asset)}</td>
                     <td>{asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "-"}</td>
                     <td onClick={(event) => event.stopPropagation()}>
                       <button className="button ghost button-rect button-sm" type="button" onClick={() => openDetails(asset)}>
@@ -361,12 +363,18 @@ export function DeviceInfoPage() {
                 </div>
                 <div className="device-info-kv">
                   <span>Status</span>
-                  <strong>{selectedAssetDetails.status}</strong>
+                  <strong>{getDisplayAssetStatus(selectedAssetDetails.status)}</strong>
                 </div>
                 <div className="device-info-kv">
                   <span>Location</span>
-                  <strong>{selectedAssetDetails.location?.name || "-"}</strong>
+                  <strong>{getAssetLocationLabel(selectedAssetDetails)}</strong>
                 </div>
+                {isWfhLocation(selectedAssetDetails) ? (
+                  <div className="device-info-kv">
+                    <span>Address</span>
+                    <strong>{getAssetWfhAddress(selectedAssetDetails) || "-"}</strong>
+                  </div>
+                ) : null}
                 <div className="device-info-kv">
                   <span>Assigned User</span>
                   <strong>{formatUser(selectedAssetDetails.assignedTo)}</strong>

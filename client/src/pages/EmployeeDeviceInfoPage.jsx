@@ -4,6 +4,8 @@ import { getMyAssets } from "../api/inventory";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
+import { getDisplayAssetStatus } from "../constants/assetWorkflow";
+import { getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 
 function formatTimestamp(value) {
   if (!value) return "-";
@@ -53,7 +55,7 @@ function buildEventSummary(log) {
   const fragments = [];
 
   if (log?.fromStatus || log?.toStatus) {
-    fragments.push(`Status: ${log?.fromStatus || "-"} to ${log?.toStatus || "-"}`);
+    fragments.push(`Status: ${getDisplayAssetStatus(log?.fromStatus)} to ${getDisplayAssetStatus(log?.toStatus)}`);
   }
 
   if (log?.fromLocation?.name || log?.toLocation?.name) {
@@ -248,11 +250,11 @@ export function EmployeeDeviceInfoPage() {
                   </div>
                   <div className="device-info-kv">
                     <span>Location</span>
-                    <strong>{asset.location?.name || "-"}</strong>
+                    <strong>{getAssetLocationLabel(asset)}</strong>
                   </div>
                   <div className="device-info-kv">
                     <span>Status</span>
-                    <strong>{asset.status || "-"}</strong>
+                    <strong>{getDisplayAssetStatus(asset.status)}</strong>
                   </div>
                 </div>
               </button>
@@ -288,11 +290,17 @@ export function EmployeeDeviceInfoPage() {
               </div>
               <div className="device-info-kv">
                 <span>Location</span>
-                <strong>{selectedAsset.location?.name || "-"}</strong>
+                <strong>{getAssetLocationLabel(selectedAsset)}</strong>
               </div>
+              {isWfhLocation(selectedAsset) ? (
+                <div className="device-info-kv">
+                  <span>Address</span>
+                  <strong>{getAssetWfhAddress(selectedAsset) || "-"}</strong>
+                </div>
+              ) : null}
               <div className="device-info-kv">
                 <span>Status</span>
-                <strong>{selectedAsset.status || "-"}</strong>
+                <strong>{getDisplayAssetStatus(selectedAsset.status)}</strong>
               </div>
             </div>
 

@@ -10,6 +10,7 @@ const { ApiError } = require("../utils/ApiError");
 const { createAssetWithQr, regenerateAssetQr } = require("../services/assetCreation.service");
 const { deleteObjectIfExists } = require("../services/s3.service");
 const { applyAssetAction } = require("../services/assetAction.service");
+const { normalizeAction } = require("../services/assetState.service");
 const { PERMISSIONS } = require("../constants/permissions");
 const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
 
@@ -86,11 +87,16 @@ function resolveActorId(req) {
 function serializeAsset(asset) {
   const payload = asset.toObject ? asset.toObject() : { ...asset };
   const qrCode = payload.qrCode || buildAssetQrValue(payload.assetId);
+  const metadata = payload.metadata || {};
+  const locationType = String(payload.locationType || metadata.locationType || "PHYSICAL").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+  const wfhAddress = String(payload.wfhAddress || metadata.wfhAddress || "").trim();
 
   return {
     ...payload,
     qrCode,
     qrDeepLink: payload.qrDeepLink || qrCode,
+    locationType,
+    wfhAddress,
   };
 }
 
@@ -320,6 +326,8 @@ async function getAssetDetails(req, res) {
       sku: asset.product?.sku || null,
       serialNumber: asset.serialNumber || null,
       status: asset.status,
+      locationType: String(asset.locationType || asset.metadata?.locationType || "PHYSICAL").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL",
+      wfhAddress: String(asset.wfhAddress || asset.metadata?.wfhAddress || "").trim(),
       location: asset.location ? { _id: asset.location._id, name: asset.location.name } : null,
       assignedTo: asset.assignedTo
         ? { _id: asset.assignedTo._id, firstName: asset.assignedTo.firstName, lastName: asset.assignedTo.lastName, email: asset.assignedTo.email }
@@ -491,7 +499,7 @@ async function performAssetAction(req, res) {
     throw new ApiError(400, "performedById is required");
   }
 
-  const actionName = String(req.body.action || "");
+  const actionName = normalizeAction(req.body.action);
 
   const result = await runAssetActionTransaction(async (session) => {
     const actionResult = await applyAssetAction({
@@ -571,6 +579,8 @@ async function updateAsset(req, res) {
       product: asset.product,
       serialNumber: asset.serialNumber,
       location: asset.location,
+      locationType: asset.locationType,
+      wfhAddress: asset.wfhAddress,
       assignedTo: asset.assignedTo,
       status: asset.status,
     };
@@ -587,12 +597,36 @@ async function updateAsset(req, res) {
       asset.serialNumber = String(req.body.serialNumber || "").trim() || null;
     }
 
-    if (req.body.locationId !== undefined) {
-      const location = await Location.findOne({ _id: req.body.locationId, isDeleted: false }).session(session);
-      if (!location) {
-        throw new ApiError(400, "Invalid location reference");
+    const nextLocationType = req.body.locationType !== undefined
+      ? (String(req.body.locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL")
+      : String(asset.locationType || "PHYSICAL").trim().toUpperCase();
+    const hasLocationPayload = req.body.locationId !== undefined || req.body.locationType !== undefined || req.body.wfhAddress !== undefined;
+
+    if (hasLocationPayload) {
+      if (nextLocationType === "WFH") {
+        const nextWfhAddress = String(req.body.wfhAddress !== undefined ? req.body.wfhAddress : asset.wfhAddress || "").trim();
+        if (!nextWfhAddress) {
+          throw new ApiError(400, "WFH Address is required when location is WFH.");
+        }
+        asset.locationType = "WFH";
+        asset.wfhAddress = nextWfhAddress;
+        asset.location = null;
+      } else {
+        const nextLocationId = req.body.locationId !== undefined ? req.body.locationId : asset.location;
+        const location = await Location.findOne({ _id: nextLocationId, isDeleted: false }).session(session);
+        if (!location) {
+          throw new ApiError(400, "Invalid location reference");
+        }
+        asset.locationType = "PHYSICAL";
+        asset.wfhAddress = "";
+        asset.location = location._id;
       }
-      asset.location = location._id;
+
+      asset.metadata = {
+        ...(asset.metadata || {}),
+        locationType: asset.locationType,
+        wfhAddress: asset.wfhAddress,
+      };
     }
 
     if (req.body.assignedToId !== undefined) {
@@ -641,6 +675,8 @@ async function updateAsset(req, res) {
               product: populatedAsset.product?._id || populatedAsset.product,
               serialNumber: populatedAsset.serialNumber,
               location: populatedAsset.location?._id || populatedAsset.location,
+              locationType: populatedAsset.locationType,
+              wfhAddress: populatedAsset.wfhAddress,
               assignedTo: populatedAsset.assignedTo?._id || populatedAsset.assignedTo || null,
               status: populatedAsset.status,
             },

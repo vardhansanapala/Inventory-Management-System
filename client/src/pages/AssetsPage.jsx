@@ -15,20 +15,25 @@ import {
 } from "../api/inventory";
 import { ActionFeedback } from "../components/ActionFeedback";
 import { ActionMenu } from "../components/ActionMenu";
+import { CopyIconButton } from "../components/CopyIconButton";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import {
   ASSET_ACTIONS,
   ASSET_STATUSES,
+  getAssetActionLabel,
+  getDisplayAssetStatus,
   getNextStatusForAction,
-  getReasonOptions,
+  getVisibleAssetStatuses,
   getValidActionsForStatus,
+  isVisibleAssetStatus,
+  normalizeAssetAction,
 } from "../constants/assetWorkflow";
 import { PERMISSIONS, hasPermission } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
-import { getAssetId, getAssetScanUrl } from "../utils/asset.util";
+import { getAssetId, getAssetLocationLabel, getAssetScanUrl, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 import { extractAssetId } from "../utils/qrParser.util";
 const sectionTabs = [
   { id: "registry", title: "Device Registry", subtitle: "Browse and select devices" },
@@ -41,31 +46,48 @@ function normalizeTab(tabValue) {
   return validSectionTabs.has(tabValue) ? tabValue : "registry";
 }
 
-function AssetReference({ assetId, copied, onCopy }) {
+function CopyableReferenceField({ label, value, copied, onCopy, renderValue }) {
   return (
     <div className="asset-reference">
-      <span>Asset ID</span>
-      <div className="asset-reference-row">
-        <code>{assetId || "-"}</code>
-        <button className="button ghost button-rect button-sm" type="button" onClick={onCopy} disabled={!assetId}>
-          {copied ? "Copied" : "Copy"}
-        </button>
+      <span>{label}</span>
+      <div className="asset-reference-row is-compact">
+        <div className="asset-reference-shell">
+          <div className="asset-reference-content">
+            {renderValue(value)}
+          </div>
+          <div className="asset-reference-actions">
+            <span className={copied ? "asset-reference-feedback is-visible" : "asset-reference-feedback"} aria-live="polite">
+              Copied
+            </span>
+            <CopyIconButton value={value} onCopied={onCopy} className="asset-reference-copy-button" />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
+function AssetReference({ assetId, copied, onCopy }) {
+  return (
+    <CopyableReferenceField
+      label="Asset ID"
+      value={assetId}
+      copied={copied}
+      onCopy={onCopy}
+      renderValue={(currentValue) => <code>{currentValue || "-"}</code>}
+    />
+  );
+}
+
 function ScanUrlField({ scanUrl, copied, onCopy }) {
   return (
-    <div className="asset-reference">
-      <span>Scan URL</span>
-      <div className="asset-reference-row">
-        <input className="input scan-url-input" value={scanUrl || "-"} readOnly />
-        <button className="button ghost button-rect button-sm" type="button" onClick={onCopy} disabled={!scanUrl}>
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-    </div>
+    <CopyableReferenceField
+      label="Scan URL"
+      value={scanUrl}
+      copied={copied}
+      onCopy={onCopy}
+      renderValue={(currentValue) => <input className="input scan-url-input" value={currentValue || "-"} readOnly />}
+    />
   );
 }
 
@@ -85,11 +107,12 @@ function DeviceInfoCard({ asset }) {
 
   return (
     <div className="info-card">
-      <InfoCardRow label="Status" value={asset.status} />
+      <InfoCardRow label="Status" value={getDisplayAssetStatus(asset.status)} />
       <InfoCardRow label="SKU" value={asset.product?.sku} />
       <InfoCardRow label="Brand / Model" value={`${asset.product?.brand || "-"} ${asset.product?.model || ""}`.trim()} />
       <InfoCardRow label="Serial Number" value={asset.serialNumber} />
-      <InfoCardRow label="Location" value={asset.location?.name} />
+      <InfoCardRow label="Location" value={getAssetLocationLabel(asset)} />
+      {isWfhLocation(asset) ? <InfoCardRow label="WFH Address" value={getAssetWfhAddress(asset)} /> : null}
       <InfoCardRow label="Assigned To" value={asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "Unassigned"} />
     </div>
   );
@@ -172,62 +195,44 @@ const emptySetupData = {
   users: [],
 };
 
-const DEFAULT_ACTION_FORM = {
-  action: ASSET_ACTIONS.ASSIGN_DEVICE,
-  reason: "OTHER",
-  customReason: "",
-  locationId: "",
-  assignedToId: "",
-  notes: "",
-  issue: "",
-  vendor: "",
-  cost: "",
-  customerName: "",
-  customerContact: "",
-  rentalStartDate: "",
-  rentalEndDate: "",
-  rentalCost: "",
-  buyerName: "",
-  salePrice: "",
-  invoiceNumber: "",
-  saleDate: "",
-};
-
-function getActionFieldVisibility(action) {
+function buildDefaultActionForm(action = "", asset = null) {
   return {
-    requiresAssignee: action === ASSET_ACTIONS.ASSIGN_DEVICE,
-    requiresLocation: action === ASSET_ACTIONS.SEND_OUTSIDE || action === ASSET_ACTIONS.TRANSFER,
-    isRepair: action === ASSET_ACTIONS.SEND_FOR_REPAIR,
-    isRental: action === ASSET_ACTIONS.RENT_DEVICE,
-    isSale: action === ASSET_ACTIONS.SELL_DEVICE,
+    action,
+    notes: "",
+    assignedToId: "",
+    locationType: isWfhLocation(asset) ? "WFH" : "PHYSICAL",
+    locationId: "",
+    wfhAddress: "",
+    issue: "",
+    vendor: "",
+    cost: "",
+    customerName: "",
+    customerContact: "",
+    rentalStartDate: "",
+    rentalEndDate: "",
+    rentalCost: "",
+    buyerName: "",
+    salePrice: "",
+    invoiceNumber: "",
+    saleDate: "",
   };
 }
 
-function resetActionFormForAction(currentForm, action, status) {
-  const nextReasonOptions = getReasonOptions(action, status);
-  const nextReason = nextReasonOptions.includes(currentForm.reason) ? currentForm.reason : nextReasonOptions[0] || "OTHER";
-  const visibility = getActionFieldVisibility(action);
+const DEFAULT_ACTION_FORM = buildDefaultActionForm();
 
+function resetActionFormForAction(currentForm, action, asset) {
   return {
-    ...DEFAULT_ACTION_FORM,
-    ...currentForm,
-    action,
-    reason: nextReason,
-    assignedToId: visibility.requiresAssignee ? currentForm.assignedToId : "",
-    locationId: visibility.requiresLocation ? currentForm.locationId : "",
-    issue: visibility.isRepair ? currentForm.issue : "",
-    vendor: visibility.isRepair ? currentForm.vendor : "",
-    cost: visibility.isRepair ? currentForm.cost : "",
-    customerName: visibility.isRental ? currentForm.customerName : "",
-    customerContact: visibility.isRental ? currentForm.customerContact : "",
-    rentalStartDate: visibility.isRental ? currentForm.rentalStartDate : "",
-    rentalEndDate: visibility.isRental ? currentForm.rentalEndDate : "",
-    rentalCost: visibility.isRental ? currentForm.rentalCost : "",
-    buyerName: visibility.isSale ? currentForm.buyerName : "",
-    salePrice: visibility.isSale ? currentForm.salePrice : "",
-    invoiceNumber: visibility.isSale ? currentForm.invoiceNumber : "",
-    saleDate: visibility.isSale ? currentForm.saleDate : "",
+    ...buildDefaultActionForm(action, asset),
+    notes: currentForm?.notes || "",
   };
+}
+
+function getLocationById(locations, locationId) {
+  return locations.find((location) => String(location?._id || "") === String(locationId || "")) || null;
+}
+
+function getUserById(users, userId) {
+  return users.find((user) => String(user?._id || "") === String(userId || "")) || null;
 }
 
 function getActionValidationError(form, selectedAsset) {
@@ -235,53 +240,222 @@ function getActionValidationError(form, selectedAsset) {
     return "Select a device first. The action form only works on the selected device.";
   }
 
-  const visibility = getActionFieldVisibility(form.action);
-
-  if (visibility.requiresAssignee && !form.assignedToId) {
-    return "Select an assignee before assigning the device.";
+  const action = normalizeAssetAction(form.action);
+  if (action === ASSET_ACTIONS.ASSIGN_DEVICE && !form.assignedToId) {
+    return "Select a user to assign this device.";
   }
 
-  if (form.action === ASSET_ACTIONS.ASSIGN_DEVICE && selectedAsset?.status === ASSET_STATUSES.SOLD) {
-    return "Sold devices cannot be assigned.";
+  if (action === ASSET_ACTIONS.TRANSFER) {
+    const nextLocationType = String(form.locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+    const nextWfhAddress = String(form.wfhAddress || "").trim();
+    const nextLocationId = String(form.locationId || "").trim();
+    const currentLocationType = isWfhLocation(selectedAsset) ? "WFH" : "PHYSICAL";
+    const currentWfhAddress = getAssetWfhAddress(selectedAsset);
+    const currentLocationId = String(selectedAsset?.location?._id || "").trim();
+
+    if (nextLocationType === "WFH") {
+      if (!nextWfhAddress) {
+        return "WFH address is required when transferring to WFH.";
+      }
+      if (currentLocationType === "WFH" && currentWfhAddress === nextWfhAddress) {
+        return "Choose a different WFH address for this transfer.";
+      }
+      return "";
+    }
+
+    if (!nextLocationId) {
+      return "Select a target location for this transfer.";
+    }
+
+    if (currentLocationType === "PHYSICAL" && currentLocationId === nextLocationId) {
+      return "Choose a different location for this transfer.";
+    }
   }
 
-  if (visibility.requiresLocation && !form.locationId) {
-    return form.action === ASSET_ACTIONS.TRANSFER
-      ? "Select the destination location before transferring the device."
-      : "Select a location before sending the device outside.";
+  if (action === ASSET_ACTIONS.SEND_FOR_REPAIR) {
+    if (!String(form.issue || "").trim()) return "Issue is required before sending for repair.";
+    if (!String(form.vendor || "").trim()) return "Vendor is required before sending for repair.";
+    if (form.cost === "") return "Cost is required before sending for repair.";
   }
 
-  if (
-    form.action === ASSET_ACTIONS.TRANSFER &&
-    selectedAsset?.location?._id &&
-    String(form.locationId) === String(selectedAsset.location._id)
-  ) {
-    return "Choose a different destination location for the transfer.";
+  if (action === ASSET_ACTIONS.RENT_OUT) {
+    if (!String(form.customerName || "").trim()) return "Customer name is required to rent out this asset.";
+    if (!String(form.customerContact || "").trim()) return "Customer contact is required to rent out this asset.";
+    if (!String(form.rentalStartDate || "").trim()) return "Rental start date is required.";
+    if (!String(form.rentalEndDate || "").trim()) return "Rental end date is required.";
+    if (form.rentalCost === "") return "Rental cost is required.";
   }
 
-  if (visibility.isRepair) {
-    if (!String(form.issue || "").trim()) return "Enter the repair issue before submitting.";
-    if (!String(form.vendor || "").trim()) return "Enter the repair vendor before submitting.";
-    if (form.cost === "" || Number.isNaN(Number(form.cost)) || Number(form.cost) < 0) return "Enter a valid repair cost before submitting.";
-  }
-
-  if (visibility.isRental) {
-    if (!String(form.customerName || "").trim()) return "Enter the rental customer before submitting.";
-    if (!String(form.customerContact || "").trim()) return "Enter the rental contact before submitting.";
-    if (!form.rentalStartDate) return "Enter the rental start date before submitting.";
-    if (!form.rentalEndDate) return "Enter the rental end date before submitting.";
-    if (new Date(form.rentalEndDate) < new Date(form.rentalStartDate)) return "Rental end date must be on or after the start date.";
-    if (form.rentalCost === "" || Number.isNaN(Number(form.rentalCost)) || Number(form.rentalCost) < 0) return "Enter a valid rental cost before submitting.";
-  }
-
-  if (visibility.isSale) {
-    if (!String(form.buyerName || "").trim()) return "Enter the buyer before submitting.";
-    if (form.salePrice === "" || Number.isNaN(Number(form.salePrice)) || Number(form.salePrice) < 0) return "Enter a valid sale price before submitting.";
-    if (!String(form.invoiceNumber || "").trim()) return "Enter the invoice number before submitting.";
-    if (!form.saleDate) return "Enter the sale date before submitting.";
+  if (action === ASSET_ACTIONS.SELL) {
+    if (!String(form.buyerName || "").trim()) return "Buyer name is required to sell this asset.";
+    if (form.salePrice === "") return "Sale price is required.";
+    if (!String(form.invoiceNumber || "").trim()) return "Invoice number is required.";
+    if (!String(form.saleDate || "").trim()) return "Sale date is required.";
   }
 
   return "";
+}
+
+function buildActionPayload(form) {
+  const action = normalizeAssetAction(form.action);
+  const payload = {
+    action,
+    notes: String(form.notes || "").trim(),
+  };
+
+  if (action === ASSET_ACTIONS.ASSIGN_DEVICE) {
+    payload.assignedToId = form.assignedToId || null;
+  }
+
+  if (action === ASSET_ACTIONS.TRANSFER) {
+    payload.locationType = String(form.locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+    payload.locationId = payload.locationType === "WFH" ? null : form.locationId || null;
+    payload.wfhAddress = payload.locationType === "WFH" ? String(form.wfhAddress || "").trim() : "";
+  }
+
+  if (action === ASSET_ACTIONS.SEND_FOR_REPAIR) {
+    payload.issue = String(form.issue || "").trim();
+    payload.vendor = String(form.vendor || "").trim();
+    payload.cost = form.cost;
+  }
+
+  if (action === ASSET_ACTIONS.RENT_OUT) {
+    payload.customerName = String(form.customerName || "").trim();
+    payload.customerContact = String(form.customerContact || "").trim();
+    payload.rentalStartDate = form.rentalStartDate;
+    payload.rentalEndDate = form.rentalEndDate;
+    payload.rentalCost = form.rentalCost;
+  }
+
+  if (action === ASSET_ACTIONS.SELL) {
+    payload.buyerName = String(form.buyerName || "").trim();
+    payload.salePrice = form.salePrice;
+    payload.invoiceNumber = String(form.invoiceNumber || "").trim();
+    payload.saleDate = form.saleDate;
+  }
+
+  return payload;
+}
+
+function buildOptimisticAssetUpdate(asset, form, setupData) {
+  if (!asset) return asset;
+
+  const action = normalizeAssetAction(form.action);
+  const nextAsset = {
+    ...asset,
+    status: getNextStatusForAction(asset.status, action) || asset.status,
+  };
+
+  if (action === ASSET_ACTIONS.ASSIGN_DEVICE) {
+    nextAsset.assignedTo = getUserById(setupData.users, form.assignedToId);
+  }
+
+  if (action === ASSET_ACTIONS.TRANSFER) {
+    const nextLocationType = String(form.locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : "PHYSICAL";
+    nextAsset.locationType = nextLocationType;
+    nextAsset.wfhAddress = nextLocationType === "WFH" ? String(form.wfhAddress || "").trim() : "";
+    if (nextLocationType === "PHYSICAL") {
+      nextAsset.location = getLocationById(setupData.locations, form.locationId) || asset.location;
+    }
+  }
+
+  if (
+    action === ASSET_ACTIONS.RETURN_DEVICE ||
+    action === ASSET_ACTIONS.RENT_OUT ||
+    action === ASSET_ACTIONS.SEND_FOR_REPAIR ||
+    action === ASSET_ACTIONS.SELL ||
+    action === ASSET_ACTIONS.MARK_LOST
+  ) {
+    nextAsset.assignedTo = null;
+  }
+
+  return nextAsset;
+}
+
+function renderActionFields({ action, actionForm, handleActionChange, selectedAsset, setupData }) {
+  const normalizedAction = normalizeAssetAction(action);
+
+  if (normalizedAction === ASSET_ACTIONS.ASSIGN_DEVICE) {
+    return (
+      <select className="input" name="assignedToId" value={actionForm.assignedToId} onChange={handleActionChange} required>
+        <option value="">Assign to user</option>
+        {setupData.users.map((user) => (
+          <option key={user._id} value={user._id}>
+            {user.firstName} {user.lastName}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (normalizedAction === ASSET_ACTIONS.TRANSFER) {
+    return (
+      <>
+        <select className="input" name="locationType" value={actionForm.locationType} onChange={handleActionChange}>
+          <option value="PHYSICAL">Physical location</option>
+          <option value="WFH">WFH</option>
+        </select>
+        {actionForm.locationType === "WFH" ? (
+          <textarea
+            className="input textarea"
+            name="wfhAddress"
+            placeholder="WFH address"
+            value={actionForm.wfhAddress}
+            onChange={handleActionChange}
+            required
+          />
+        ) : (
+          <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange} required>
+            <option value="">Transfer to location</option>
+            {setupData.locations
+              .filter((location) => (
+                isWfhLocation(selectedAsset) || String(location?._id || "") !== String(selectedAsset?.location?._id || "")
+              ))
+              .map((location) => (
+                <option key={location._id} value={location._id}>
+                  {location.name}
+                </option>
+              ))}
+          </select>
+        )}
+      </>
+    );
+  }
+
+  if (normalizedAction === ASSET_ACTIONS.SEND_FOR_REPAIR) {
+    return (
+      <>
+        <input className="input" name="issue" placeholder="Issue" value={actionForm.issue} onChange={handleActionChange} required />
+        <input className="input" name="vendor" placeholder="Vendor" value={actionForm.vendor} onChange={handleActionChange} required />
+        <input className="input" name="cost" type="number" min="0" step="0.01" placeholder="Repair cost" value={actionForm.cost} onChange={handleActionChange} required />
+      </>
+    );
+  }
+
+  if (normalizedAction === ASSET_ACTIONS.RENT_OUT) {
+    return (
+      <>
+        <input className="input" name="customerName" placeholder="Customer name" value={actionForm.customerName} onChange={handleActionChange} required />
+        <input className="input" name="customerContact" placeholder="Customer contact" value={actionForm.customerContact} onChange={handleActionChange} required />
+        <input className="input" name="rentalStartDate" type="date" value={actionForm.rentalStartDate} onChange={handleActionChange} required />
+        <input className="input" name="rentalEndDate" type="date" value={actionForm.rentalEndDate} onChange={handleActionChange} required />
+        <input className="input" name="rentalCost" type="number" min="0" step="0.01" placeholder="Rental cost" value={actionForm.rentalCost} onChange={handleActionChange} required />
+      </>
+    );
+  }
+
+  if (normalizedAction === ASSET_ACTIONS.SELL) {
+    return (
+      <>
+        <input className="input" name="buyerName" placeholder="Buyer name" value={actionForm.buyerName} onChange={handleActionChange} required />
+        <input className="input" name="salePrice" type="number" min="0" step="0.01" placeholder="Sale price" value={actionForm.salePrice} onChange={handleActionChange} required />
+        <input className="input" name="invoiceNumber" placeholder="Invoice number" value={actionForm.invoiceNumber} onChange={handleActionChange} required />
+        <input className="input" name="saleDate" type="date" value={actionForm.saleDate} onChange={handleActionChange} required />
+      </>
+    );
+  }
+
+  return null;
 }
 
 export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
@@ -300,7 +474,10 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") || "");
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const nextStatus = searchParams.get("status") || "";
+    return isVisibleAssetStatus(nextStatus) ? nextStatus : "";
+  });
   const [latestCreatedAsset, setLatestCreatedAsset] = useState(null);
   const [selectedAssetQrUrl, setSelectedAssetQrUrl] = useState("");
   const [selectedAssetQrLoading, setSelectedAssetQrLoading] = useState(false);
@@ -332,7 +509,15 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const flashTimeoutRef = useRef(null);
   const [flashRowId, setFlashRowId] = useState("");
   const [flashRowVariant, setFlashRowVariant] = useState("success");
-  const [createForm, setCreateForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+  const [createForm, setCreateForm] = useState({
+    productId: "",
+    serialNumber: "",
+    locationType: "PHYSICAL",
+    locationId: "",
+    wfhAddress: "",
+    assignedToId: "",
+    notes: "",
+  });
   const [showCreateDeviceForm, setShowCreateDeviceForm] = useState(true);
   const searchDebounceRef = useRef(null);
   const previousSearchRef = useRef("");
@@ -343,11 +528,18 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const canCreateAsset = hasPermission(currentUser, PERMISSIONS.CREATE_ASSET);
   const canUpdateAsset = hasPermission(currentUser, PERMISSIONS.UPDATE_ASSET);
   const canDeleteAsset = hasPermission(currentUser, PERMISSIONS.DELETE_ASSET);
-  const canAssignAsset = hasPermission(currentUser, PERMISSIONS.ASSIGN_ASSET);
   const canEditOrDeleteFromRegistry = canUpdateAsset || canDeleteAsset;
 
   const [editingAsset, setEditingAsset] = useState(null);
-  const [editForm, setEditForm] = useState({ productId: "", serialNumber: "", locationId: "", assignedToId: "", status: ASSET_STATUSES.AVAILABLE });
+  const [editForm, setEditForm] = useState({
+    productId: "",
+    serialNumber: "",
+    locationType: "PHYSICAL",
+    locationId: "",
+    wfhAddress: "",
+    assignedToId: "",
+    status: ASSET_STATUSES.AVAILABLE,
+  });
   const [deleteAssetTarget, setDeleteAssetTarget] = useState(null);
   const selectionFeedback = useActionFeedback();
   const createFeedback = useActionFeedback({ preferGlobal: true });
@@ -355,36 +547,22 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   const modalFeedback = useActionFeedback();
   const [actionForm, setActionForm] = useState(DEFAULT_ACTION_FORM);
   const validActionOptions = getValidActionsForStatus(selectedAsset?.status);
-  const reasonOptions = getReasonOptions(actionForm.action, selectedAsset?.status);
-  const actionFieldVisibility = getActionFieldVisibility(actionForm.action);
-  const selectedAssetRequiresAssignee = actionFieldVisibility.requiresAssignee;
-  const selectedAssetRequiresLocation = actionFieldVisibility.requiresLocation;
-  const selectedAssetIsRepairAction = actionFieldVisibility.isRepair;
-  const selectedAssetIsRentalAction = actionFieldVisibility.isRental;
-  const selectedAssetIsSaleAction = actionFieldVisibility.isSale;
   const actionValidationError = getActionValidationError(actionForm, selectedAsset);
   const isActionFormValid = !actionValidationError && validActionOptions.includes(actionForm.action);
-  const canPerformSelectedAction = actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE ? canAssignAsset : canUpdateAsset;
-  const currentActionLocationId = selectedAsset?.location?._id ? String(selectedAsset.location._id) : "";
-  const targetActionLocation =
-    selectedAssetRequiresLocation && actionForm.locationId
-      ? setupData.locations.find((location) => String(location._id) === String(actionForm.locationId)) || null
-      : null;
+  const canPerformSelectedAction = canUpdateAsset;
 
   const selectedAssetScanUrl = useMemo(() => getAssetScanUrl(selectedAsset), [selectedAsset]);
   const createdAssetScanUrl = useMemo(() => getAssetScanUrl(latestCreatedAsset), [latestCreatedAsset]);
 
-  async function copyAssetId(assetId) {
-    if (!assetId || !navigator?.clipboard?.writeText) return;
-    await navigator.clipboard.writeText(assetId);
+  function copyAssetId(assetId) {
+    if (!assetId) return;
     setCopiedAssetId(assetId);
     window.clearTimeout(copyTimeoutRef.current);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedAssetId(""), 1800);
   }
 
-  async function copyScanUrl(scanUrl) {
-    if (!scanUrl || !navigator?.clipboard?.writeText) return;
-    await navigator.clipboard.writeText(scanUrl);
+  function copyScanUrl(scanUrl) {
+    if (!scanUrl) return;
     setCopiedScanUrl(scanUrl);
     window.clearTimeout(copyTimeoutRef.current);
     copyTimeoutRef.current = window.setTimeout(() => setCopiedScanUrl(""), 1800);
@@ -550,10 +728,6 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       setFlashRowId("");
       setFlashRowVariant("success");
     }, 1400);
-  }
-
-  function getOptimisticNextStatus(currentStatus, action) {
-    return getNextStatusForAction(currentStatus, action);
   }
 
   async function handleRegenerateQr(asset, target) {
@@ -795,7 +969,8 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
   useEffect(() => {
     const nextStatus = searchParams.get("status") || "";
-    setStatusFilter((current) => (current === nextStatus ? current : nextStatus));
+    const visibleStatus = isVisibleAssetStatus(nextStatus) ? nextStatus : "";
+    setStatusFilter((current) => (current === visibleStatus ? current : visibleStatus));
   }, [searchParams]);
 
   useEffect(() => {
@@ -864,9 +1039,9 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
     setActionForm((current) => {
       const nextAction = nextValidActions.includes(current.action) ? current.action : nextValidActions[0] || "";
-      return resetActionFormForAction(current, nextAction, selectedAsset?.status);
+      return resetActionFormForAction(current, nextAction, selectedAsset);
     });
-  }, [selectedAsset?._id, selectedAsset?.status]);
+  }, [selectedAsset?._id, selectedAsset?.status, selectedAsset?.locationType, selectedAsset?.wfhAddress]);
 
   useEffect(() => {
     return () => {
@@ -880,6 +1055,15 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
   function handleCreateChange(event) {
     const { name, value } = event.target;
+    if (name === "locationType") {
+      setCreateForm((current) => ({
+        ...current,
+        locationType: value,
+        locationId: value === "WFH" ? "" : current.locationId,
+        wfhAddress: value === "WFH" ? current.wfhAddress : "",
+      }));
+      return;
+    }
     setCreateForm((current) => ({
       ...current,
       [name]: name === "serialNumber" ? digitsOnly(value) : value,
@@ -892,7 +1076,9 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     setEditForm({
       productId: asset?.product?._id || "",
       serialNumber: asset?.serialNumber || "",
+      locationType: isWfhLocation(asset) ? "WFH" : "PHYSICAL",
       locationId: asset?.location?._id || "",
+      wfhAddress: getAssetWfhAddress(asset),
       assignedToId: asset?.assignedTo?._id || "",
       status: asset?.status || ASSET_STATUSES.AVAILABLE,
     });
@@ -906,6 +1092,14 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       modalFeedback.showError("Serial Number must contain digits only.");
       return;
     }
+    if (editForm.locationType === "WFH" && !String(editForm.wfhAddress || "").trim()) {
+      modalFeedback.showError("WFH Address is required when location is WFH.");
+      return;
+    }
+    if (editForm.locationType !== "WFH" && !editForm.locationId) {
+      modalFeedback.showError("Location is required.");
+      return;
+    }
     const editKey = `edit-asset:${editingAsset._id}`;
     setBusyKey(editKey);
 
@@ -913,7 +1107,9 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       await updateAsset(editingAsset._id, {
         productId: editForm.productId || null,
         serialNumber: digitsOnly(editForm.serialNumber) || "",
-        locationId: editForm.locationId || null,
+        locationType: editForm.locationType === "WFH" ? "WFH" : "PHYSICAL",
+        locationId: editForm.locationType === "WFH" ? null : editForm.locationId || null,
+        wfhAddress: editForm.locationType === "WFH" ? String(editForm.wfhAddress || "").trim() : "",
         assignedToId: editForm.assignedToId || null,
         status: editForm.status,
       });
@@ -959,11 +1155,16 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     const { name, value } = event.target;
     setActionForm((current) => {
       if (name === "action") {
-        return resetActionFormForAction(current, value, selectedAsset?.status);
+        return resetActionFormForAction(current, value, selectedAsset);
       }
 
-      if (name === "reason" && value !== "OTHER") {
-        return { ...current, reason: value, customReason: "" };
+      if (name === "locationType") {
+        return {
+          ...current,
+          locationType: value,
+          locationId: value === "WFH" ? "" : current.locationId,
+          wfhAddress: value === "WFH" ? current.wfhAddress : "",
+        };
       }
 
       return { ...current, [name]: value };
@@ -979,11 +1180,25 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
         createFeedback.showError("Serial Number must contain digits only.", { global: true });
         return;
       }
+      if (createForm.locationType === "WFH" && !String(createForm.wfhAddress || "").trim()) {
+        createFeedback.showError("WFH Address is required when location is WFH.", { global: true });
+        return;
+      }
+      if (createForm.locationType !== "WFH" && !createForm.locationId) {
+        createFeedback.showError("Location is required.", { global: true });
+        return;
+      }
       setBusyKey("create-device");
-      const createdAsset = await createAsset({ ...createForm, assignedToId: createForm.assignedToId || null });
+      const createdAsset = await createAsset({
+        ...createForm,
+        locationType: createForm.locationType === "WFH" ? "WFH" : "PHYSICAL",
+        locationId: createForm.locationType === "WFH" ? null : createForm.locationId || null,
+        wfhAddress: createForm.locationType === "WFH" ? String(createForm.wfhAddress || "").trim() : "",
+        assignedToId: createForm.assignedToId || null,
+      });
       setLatestCreatedAsset(createdAsset);
       createFeedback.showSuccess(`Asset ${getAssetId(createdAsset)} created. QR is shown below in this section.`, { global: true });
-      setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+      setCreateForm({ productId: "", serialNumber: "", locationType: "PHYSICAL", locationId: "", wfhAddress: "", assignedToId: "", notes: "" });
       setShowCreateDeviceForm(false);
       await loadAssets(buildAssetListFilters());
       await handleSelectAsset(createdAsset._id);
@@ -1023,9 +1238,10 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
   async function submitAction(event) {
     event.preventDefault();
+    const normalizedAction = normalizeAssetAction(actionForm.action);
 
     if (!canPerformSelectedAction) {
-      workflowFeedback.showError(actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE ? "Missing permission: ASSIGN_ASSET" : "Missing permission: UPDATE_ASSET");
+      workflowFeedback.showError("Missing permission: UPDATE_ASSET");
       return;
     }
 
@@ -1034,7 +1250,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       return;
     }
 
-    if (!validActionOptions.includes(actionForm.action)) {
+    if (!validActionOptions.includes(normalizedAction)) {
       workflowFeedback.showError("This device does not allow that action in its current status.");
       return;
     }
@@ -1050,61 +1266,24 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
     const previousSelected = selectedAsset;
     const previousAssets = assets;
-    const optimisticNextStatus = getOptimisticNextStatus(selectedAsset?.status, actionForm.action);
-    const optimisticAssignee =
-      selectedAssetRequiresAssignee && actionForm.assignedToId
-        ? setupData.users.find((u) => String(u._id) === String(actionForm.assignedToId)) || null
-        : actionForm.action === ASSET_ACTIONS.RETURN_DEVICE ||
-            actionForm.action === ASSET_ACTIONS.SEND_OUTSIDE ||
-            actionForm.action === ASSET_ACTIONS.SEND_FOR_REPAIR ||
-            actionForm.action === ASSET_ACTIONS.RENT_DEVICE ||
-            actionForm.action === ASSET_ACTIONS.SELL_DEVICE ||
-            actionForm.action === ASSET_ACTIONS.MARK_LOST
-          ? null
-          : previousSelected?.assignedTo || null;
-    const optimisticLocation =
-      selectedAssetRequiresLocation && actionForm.locationId
-        ? setupData.locations.find((l) => String(l._id) === String(actionForm.locationId)) || previousSelected?.location || null
-        : previousSelected?.location || null;
+    const optimisticAsset = buildOptimisticAssetUpdate(selectedAsset, { ...actionForm, action: normalizedAction }, setupData);
 
     // Optimistic UI: badge + row highlight + immediate list update.
-    setSelectedAsset((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        status: optimisticNextStatus || current.status,
-        assignedTo: optimisticAssignee,
-        location: optimisticLocation,
-      };
-    });
+    setSelectedAsset(optimisticAsset);
     setAssets((current) =>
       current.map((a) =>
         a._id === selectedAssetId
-          ? {
-              ...a,
-              status: optimisticNextStatus || a.status,
-              assignedTo: optimisticAssignee,
-              location: optimisticLocation,
-            }
+          ? buildOptimisticAssetUpdate(a, { ...actionForm, action: normalizedAction }, setupData)
           : a
       )
     );
     flashRow(selectedAssetId, "success");
 
     try {
-      const result = await performAssetAction(selectedAssetId, {
-        ...actionForm,
-        customReason: actionForm.reason === "OTHER" ? actionForm.customReason.trim() : "",
-        locationId: selectedAssetRequiresLocation ? actionForm.locationId || null : null,
-        toLocationId: actionForm.action === ASSET_ACTIONS.TRANSFER ? actionForm.locationId || null : null,
-        assignedToId: selectedAssetRequiresAssignee ? actionForm.assignedToId || null : null,
-        cost: actionForm.cost === "" ? null : Number(actionForm.cost),
-        rentalCost: actionForm.rentalCost === "" ? null : Number(actionForm.rentalCost),
-        salePrice: actionForm.salePrice === "" ? null : Number(actionForm.salePrice),
-      });
+      const result = await performAssetAction(selectedAssetId, buildActionPayload({ ...actionForm, action: normalizedAction }));
 
       setSelectedAsset(result.asset);
-      workflowFeedback.showSuccess(`Action ${actionForm.action} completed for ${getAssetId(result.asset)}.`);
+      workflowFeedback.showSuccess(`${getAssetActionLabel(normalizedAction)} completed for ${getAssetId(result.asset)}.`);
       await loadAssets(buildAssetListFilters());
       const logs = await getAssetAuditLogs(selectedAssetId);
       setAssetLogs(logs);
@@ -1188,7 +1367,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     </td>
                     <td>{asset.product?.sku}</td>
                     <td><StatusPill status={asset.status} /></td>
-                    <td>{asset.location?.name || "-"}</td>
+                    <td>{getAssetLocationLabel(asset)}</td>
                     <td>{asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "-"}</td>
                     {canEditOrDeleteFromRegistry ? (
                       <td onClick={(event) => event.stopPropagation()}>
@@ -1260,10 +1439,25 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                 inputMode="numeric"
                 pattern="[0-9]*"
               />
-              <select className="input" name="locationId" value={createForm.locationId} onChange={handleCreateChange} required>
-                <option value="">Initial Location</option>
-                {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
+              <select className="input" name="locationType" value={createForm.locationType} onChange={handleCreateChange}>
+                <option value="PHYSICAL">PHYSICAL</option>
+                <option value="WFH">WFH</option>
               </select>
+              {createForm.locationType === "WFH" ? (
+                <textarea
+                  className="input textarea"
+                  name="wfhAddress"
+                  placeholder="WFH Address"
+                  value={createForm.wfhAddress}
+                  onChange={handleCreateChange}
+                  required
+                />
+              ) : (
+                <select className="input" name="locationId" value={createForm.locationId} onChange={handleCreateChange} required>
+                  <option value="">Initial Location</option>
+                  {setupData.locations.map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
+                </select>
+              )}
               <select className="input" name="assignedToId" value={createForm.assignedToId} onChange={handleCreateChange}>
                 <option value="">Assigned To (optional)</option>
                 {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
@@ -1287,7 +1481,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                     className="button dark button-rect"
                     type="button"
                     onClick={() => {
-                      setCreateForm({ productId: "", serialNumber: "", locationId: "", assignedToId: "", notes: "" });
+                      setCreateForm({ productId: "", serialNumber: "", locationType: "PHYSICAL", locationId: "", wfhAddress: "", assignedToId: "", notes: "" });
                       setShowCreateDeviceForm(true);
                       createFeedback.clear();
                     }}
@@ -1326,82 +1520,84 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       {activeTab === "assign" ? (
         <div className="assets-two-col">
           <div className="page-stack">
-            <SectionCard title="Select Device" subtitle="Scan a QR code or enter an Asset ID to target actions.">
-              <div className="assign-selector">
-              <div className="mode-toggle" role="tablist" aria-label="Device selection mode">
-                {!selectedAsset ? (
-                <button type="button" className={assignMode === "scan" ? "button dark" : "button ghost"} onClick={startScanner}>Scan QR</button>
-                ) : null}
-                <button
-                  type="button"
-                  className={assignMode === "manual" ? "button dark" : "button ghost"}
-                  onClick={() => {
-                    stopScanner();
-                    setScanError("");
-                    setAssignMode("manual");
-                    window.requestAnimationFrame(() => assignInputRef.current?.focus());
-                  }}
-                >
-                  Enter Asset ID
-                </button>
-              </div>
+            {!selectedAsset ? (
+              <SectionCard title="Select Device" subtitle="Scan a QR code or enter an Asset ID to target actions.">
+                <div className="assign-selector">
+                <div className="mode-toggle" role="tablist" aria-label="Device selection mode">
+                  {!selectedAsset ? (
+                  <button type="button" className={assignMode === "scan" ? "button dark" : "button ghost"} onClick={startScanner}>Scan QR</button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={assignMode === "manual" ? "button dark" : "button ghost"}
+                    onClick={() => {
+                      stopScanner();
+                      setScanError("");
+                      setAssignMode("manual");
+                      window.requestAnimationFrame(() => assignInputRef.current?.focus());
+                    }}
+                  >
+                    Enter Asset ID
+                  </button>
+                </div>
 
-              {scanError ? <div className="page-message error">{scanError}</div> : null}
+                {scanError ? <div className="page-message error">{scanError}</div> : null}
 
-              <form className="inline-form" onSubmit={handleAssignLookupSubmit}>
-                <input
-                  ref={assignInputRef}
-                  className="input"
-                  placeholder="Paste an Asset ID or full scan URL"
-                  value={assignLookupInput}
-                  onChange={(event) => setAssignLookupInput(event.target.value)}
+                <form className="inline-form" onSubmit={handleAssignLookupSubmit}>
+                  <input
+                    ref={assignInputRef}
+                    className="input"
+                    placeholder="Paste an Asset ID or full scan URL"
+                    value={assignLookupInput}
+                    onChange={(event) => setAssignLookupInput(event.target.value)}
+                  />
+                  <button className="button dark with-spinner" type="submit" disabled={busyKey === "assign-lookup"}>
+                    {busyKey === "assign-lookup" ? <span className="button-spinner" aria-hidden /> : null}
+                    <span>{busyKey === "assign-lookup" ? "Selecting..." : "Select Device"}</span>
+                  </button>
+                  {/* <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={busyKey === "assign-lookup"}>
+                    Simulate Scan
+                  </button> */}
+                </form>
+                <ActionFeedback
+                  type={selectionFeedback.feedback?.type}
+                  message={selectionFeedback.feedback?.message}
+                  autoDismissMs={selectionFeedback.feedback?.autoDismissMs}
+                  onClose={selectionFeedback.clear}
+                  className="action-feedback-inline"
                 />
-                <button className="button dark with-spinner" type="submit" disabled={busyKey === "assign-lookup"}>
-                  {busyKey === "assign-lookup" ? <span className="button-spinner" aria-hidden /> : null}
-                  <span>{busyKey === "assign-lookup" ? "Selecting..." : "Select Device"}</span>
-                </button>
-                <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={busyKey === "assign-lookup"}>
-                  Simulate Scan
-                </button>
-              </form>
-              <ActionFeedback
-                type={selectionFeedback.feedback?.type}
-                message={selectionFeedback.feedback?.message}
-                autoDismissMs={selectionFeedback.feedback?.autoDismissMs}
-                onClose={selectionFeedback.clear}
-                className="action-feedback-inline"
-              />
 
-              {assignMode === "scan" && !selectedAsset ? (
-                <div className="scan-mode-panel">
-                  <div className="scan-reader scan-video-shell">
-                    {scanEngine === "native" ? (
-                      <video ref={videoRef} className="scan-video" autoPlay muted playsInline />
-                    ) : (
-                      <div id="assign-qr-reader" />
-                    )}
+                {assignMode === "scan" && !selectedAsset ? (
+                  <div className="scan-mode-panel">
+                    <div className="scan-reader scan-video-shell">
+                      {scanEngine === "native" ? (
+                        <video ref={videoRef} className="scan-video" autoPlay muted playsInline />
+                      ) : (
+                        <div id="assign-qr-reader" />
+                      )}
+                    </div>
+                    {scanEngine === "native" ? <canvas ref={canvasRef} className="scan-canvas" /> : null}
+                    <p className="scan-help">
+                      {scanStatus === "requesting"
+                        ? "Requesting camera permission..."
+                        : scanStatus === "streaming"
+                          ? "Point the camera at a device QR. The matching device will be selected automatically."
+                          : "Click Scan QR to request camera access and start scanning."}
+                    </p>
                   </div>
-                  {scanEngine === "native" ? <canvas ref={canvasRef} className="scan-canvas" /> : null}
-                  <p className="scan-help">
-                    {scanStatus === "requesting"
-                      ? "Requesting camera permission..."
-                      : scanStatus === "streaming"
-                        ? "Point the camera at a device QR. The matching device will be selected automatically."
-                        : "Click Scan QR to request camera access and start scanning."}
-                  </p>
-                </div>
-              ) : (
-                <div className="scan-mode-panel">
-                  <p className="scan-help">Manual mode is active. Enter an Asset ID to select a device without navigating away.</p>
-                </div>
-              )}
+                ) : (
+                  <div className="scan-mode-panel">
+                    <p className="scan-help">Manual mode is active. Enter an Asset ID to select a device without navigating away.</p>
+                  </div>
+                )}
 
-              <div className="detail-item">
-                <span>Decoded QR Value</span>
-                <strong>{lastDecodedValue || "No scan yet"}</strong>
-              </div>
-              </div>
-            </SectionCard>
+                <div className="detail-item">
+                  <span>Decoded QR Value</span>
+                  <strong>{lastDecodedValue || "No scan yet"}</strong>
+                </div>
+                </div>
+              </SectionCard>
+            ) : null}
 
             <SectionCard title="Device Info" subtitle="The selected device details will appear here.">
               <DeviceInfoCard asset={selectedAsset} />
@@ -1443,97 +1639,39 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
                       (Boolean(selectedAssetId) && busyKey === `asset-action:${selectedAssetId}`)
                     }
                   >
-                    <div className="selected-asset-banner">
-                      <span>Action Target</span>
+                    <div
+                    //  className="selected-asset-banner"
+                     >
+                      <strong>Action :- </strong>
                       <strong>{getAssetId(selectedAsset) || "No device selected"}</strong>
                     </div>
 
                     {!selectedAsset ? <div className="action-hint">Choose a device first. Actions apply only to the selected device.</div> : null}
                     {selectedAsset && !validActionOptions.length ? <div className="action-hint">No transitions are available for the current status.</div> : null}
                     {selectedAsset && !canPerformSelectedAction ? (
-                      <div className="action-hint">
-                        {actionForm.action === ASSET_ACTIONS.ASSIGN_DEVICE
-                          ? "You do not have ASSIGN_ASSET permission for this action."
-                          : "You do not have UPDATE_ASSET permission for this action."}
-                      </div>
+                      <div className="action-hint">You do not have UPDATE_ASSET permission for this action.</div>
                     ) : null}
                     {selectedAsset && validActionOptions.length && actionValidationError ? <div className="action-hint">{actionValidationError}</div> : null}
 
                     <select className="input" name="action" value={actionForm.action} onChange={handleActionChange} required>
-                      {validActionOptions.length ? validActionOptions.map((action) => <option key={action} value={action}>{action}</option>) : <option value="">No valid actions</option>}
+                      {validActionOptions.length ? (
+                        validActionOptions.map((action) => (
+                          <option key={action} value={action}>
+                            {getAssetActionLabel(action)}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No valid actions</option>
+                      )}
                     </select>
-                    <select className="input" name="reason" value={actionForm.reason} onChange={handleActionChange} required>
-                      {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                    </select>
-                    {actionForm.reason === "OTHER" ? (
-                      <input className="input" name="customReason" placeholder="Custom reason" value={actionForm.customReason} onChange={handleActionChange} />
-                    ) : null}
-                    {actionForm.action === ASSET_ACTIONS.TRANSFER ? (
-                      <div className="action-location-preview">
-                        <div className="action-location-box">
-                          <span>Current Location</span>
-                          <strong>{selectedAsset?.location?.name || "-"}</strong>
-                        </div>
-                        <div className="action-location-arrow" aria-hidden>
-                          to
-                        </div>
-                        <div className="action-location-box">
-                          <span>Target Location</span>
-                          <strong>{targetActionLocation?.name || "Select a destination"}</strong>
-                        </div>
-                      </div>
-                    ) : null}
-                    {selectedAssetRequiresLocation ? (
-                      <select className="input" name="locationId" value={actionForm.locationId} onChange={handleActionChange} required>
-                        <option value="">{actionForm.action === ASSET_ACTIONS.TRANSFER ? "To Location" : "Target Location"}</option>
-                        {setupData.locations
-                          .filter((location) => actionForm.action !== ASSET_ACTIONS.TRANSFER || String(location._id) !== currentActionLocationId)
-                          .map((location) => <option key={location._id} value={location._id}>{location.name}</option>)}
-                      </select>
-                    ) : null}
-                    {selectedAssetRequiresAssignee ? (
-                      <select className="input" name="assignedToId" value={actionForm.assignedToId} onChange={handleActionChange} required>
-                        <option value="">{actionForm.action === ASSET_ACTIONS.TRANSFER ? "Transfer To" : "Target Assignee"}</option>
-                        {setupData.users.map((user) => <option key={user._id} value={user._id}>{user.firstName} {user.lastName}</option>)}
-                      </select>
-                    ) : null}
-                    {selectedAssetIsRepairAction ? (
-                      <input className="input" name="issue" placeholder="Issue" value={actionForm.issue} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRepairAction ? (
-                      <input className="input" name="vendor" placeholder="Vendor" value={actionForm.vendor} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRepairAction ? (
-                      <input className="input" type="number" min="0" step="0.01" name="cost" placeholder="Repair Cost" value={actionForm.cost} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRentalAction ? (
-                      <input className="input" name="customerName" placeholder="Customer" value={actionForm.customerName} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRentalAction ? (
-                      <input className="input" name="customerContact" placeholder="Customer Contact" value={actionForm.customerContact} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRentalAction ? (
-                      <input className="input" type="date" name="rentalStartDate" value={actionForm.rentalStartDate} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRentalAction ? (
-                      <input className="input" type="date" name="rentalEndDate" value={actionForm.rentalEndDate} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsRentalAction ? (
-                      <input className="input" type="number" min="0" step="0.01" name="rentalCost" placeholder="Rental Cost" value={actionForm.rentalCost} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsSaleAction ? (
-                      <input className="input" name="buyerName" placeholder="Buyer" value={actionForm.buyerName} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsSaleAction ? (
-                      <input className="input" type="number" min="0" step="0.01" name="salePrice" placeholder="Sale Price" value={actionForm.salePrice} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsSaleAction ? (
-                      <input className="input" name="invoiceNumber" placeholder="Invoice Number" value={actionForm.invoiceNumber} onChange={handleActionChange} required />
-                    ) : null}
-                    {selectedAssetIsSaleAction ? (
-                      <input className="input" type="date" name="saleDate" value={actionForm.saleDate} onChange={handleActionChange} required />
-                    ) : null}
-                    <textarea className="input textarea" name="notes" placeholder="Action notes" value={actionForm.notes} onChange={handleActionChange} />
+                    {renderActionFields({
+                      action: actionForm.action,
+                      actionForm,
+                      handleActionChange,
+                      selectedAsset,
+                      setupData,
+                    })}
+                    <textarea className="input textarea" name="notes" placeholder="Reason (optional)" value={actionForm.notes} onChange={handleActionChange} />
                     <button
                       className="button dark button-rect with-spinner"
                       type="submit"
@@ -1622,14 +1760,39 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
             <label className="field-stack">
               <span>Location</span>
-              <select className="input" value={editForm.locationId} onChange={(event) => setEditForm((c) => ({ ...c, locationId: event.target.value }))} required>
-                <option value="">Select location</option>
-                {setupData.locations.map((location) => (
-                  <option key={location._id} value={location._id}>
-                    {location.name}
-                  </option>
-                ))}
+              <select
+                className="input"
+                value={editForm.locationType}
+                onChange={(event) =>
+                  setEditForm((c) => ({
+                    ...c,
+                    locationType: event.target.value,
+                    locationId: event.target.value === "WFH" ? "" : c.locationId,
+                    wfhAddress: event.target.value === "WFH" ? c.wfhAddress : "",
+                  }))
+                }
+              >
+                <option value="PHYSICAL">PHYSICAL</option>
+                <option value="WFH">WFH</option>
               </select>
+              {editForm.locationType === "WFH" ? (
+                <textarea
+                  className="input textarea"
+                  placeholder="WFH Address"
+                  value={editForm.wfhAddress}
+                  onChange={(event) => setEditForm((c) => ({ ...c, wfhAddress: event.target.value }))}
+                  required
+                />
+              ) : (
+                <select className="input" value={editForm.locationId} onChange={(event) => setEditForm((c) => ({ ...c, locationId: event.target.value }))} required>
+                  <option value="">Select location</option>
+                  {setupData.locations.map((location) => (
+                    <option key={location._id} value={location._id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
 
             <label className="field-stack">
@@ -1647,7 +1810,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
             <label className="field-stack">
               <span>Status</span>
               <select className="input" value={editForm.status} onChange={(event) => setEditForm((c) => ({ ...c, status: event.target.value }))} required>
-                {Object.values(ASSET_STATUSES).map((status) => (
+                {getVisibleAssetStatuses().map((status) => (
                   <option key={status} value={status}>
                     {status}
                   </option>

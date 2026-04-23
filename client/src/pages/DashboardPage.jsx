@@ -38,13 +38,13 @@ export function DashboardPage() {
 
       <div className="stats-grid">
         <StatCard label="Total Assets : " value={summary.totalAssets} onClick={() => navigate("/assets")} />
-        <StatCard label="In Repairs : " value={summary.openRepairs} accent="forest" onClick={() => navigate("/assets?status=UNDER_REPAIR")} />
+        {/* <StatCard label="In Repairs : " value={summary.openRepairs} accent="forest" onClick={() => navigate("/assets?status=UNDER_REPAIR")} /> */}
         <StatCard label="Available : " value={summary.statusBreakdown.AVAILABLE || 0} accent="sun" onClick={() => navigate("/assets?status=AVAILABLE")} />
         <StatCard label="Assigned : " value={summary.statusBreakdown.ASSIGNED || 0} accent="ink" onClick={() => navigate("/assets?status=ASSIGNED")} />
-        <StatCard label="Rented Out : " value={summary.statusBreakdown.RENTED_OUT || 0} accent="ink" onClick={() => navigate("/assets?status=RENTED_OUT")} />
-        <StatCard label="Damaged : " value={summary.statusBreakdown.DAMAGED || 0} accent="forest" onClick={() => navigate("/assets?status=DAMAGED")} />
-        <StatCard label="Sold : " value={summary.statusBreakdown.SOLD || 0} accent="success" onClick={() => navigate("/assets?status=SOLD")} />
-        <StatCard label="Lost : " value={summary.statusBreakdown.LOST || 0} accent="danger" onClick={() => navigate("/assets?status=LOST")} />
+        {/* <StatCard label="Rented Out : " value={summary.statusBreakdown.RENTED_OUT || 0} accent="ink" onClick={() => navigate("/assets?status=RENTED_OUT")} /> */}
+        {/* <StatCard label="Damaged : " value={summary.statusBreakdown.DAMAGED || 0} accent="forest" onClick={() => navigate("/assets?status=DAMAGED")} /> */}
+        {/* <StatCard label="Sold : " value={summary.statusBreakdown.SOLD || 0} accent="success" onClick={() => navigate("/assets?status=SOLD")} /> */}
+        {/* <StatCard label="Lost : " value={summary.statusBreakdown.LOST || 0} accent="danger" onClick={() => navigate("/assets?status=LOST")} /> */}
       </div>
 
       <SectionCard title="Status Breakdown" subtitle="Current status counts across all assets">

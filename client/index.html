@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>const s = localStorage.getItem("theme"); document.documentElement.setAttribute("data-theme", s || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));</script>
     <title>Inventory Command Center</title>
   </head>
   <body>
@@ -10,4 +11,3 @@
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-

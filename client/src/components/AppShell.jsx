@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { ThemeToggle } from "./ThemeToggle";
 import { getVisibleSidebarLinks } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
 
@@ -38,9 +39,12 @@ export function AppShell({ children }) {
               <span className="user-badge">
                 {user.firstName} {user.lastName} · {String(user.role || "").replaceAll("_", " ")}
               </span>
-              <button className="button" onClick={logout}>
-                Logout
-              </button>
+              <div className="header-actions">
+                <ThemeToggle />
+                <button className="button" onClick={logout}>
+                  Logout
+                </button>
+              </div>
             </>
           ) : (
             <NavLink to="/login" className="button">

@@ -5,7 +5,7 @@ import { canAccessModule } from "../constants/permissions";
 export function ProtectedRoute({ moduleKey, children }) {
   const location = useLocation();
   const { user, loading } = useAuth();
-  const bypassModuleCheck = location.pathname.startsWith("/device-info") || location.pathname.startsWith("/scan");
+  const bypassModuleCheck = location.pathname.startsWith("/scan");
 
   if (loading) {
     return <div className="page-message">Loading access...</div>;

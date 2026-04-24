@@ -1,6 +1,6 @@
 const { User } = require("../models/User");
 const { USER_STATUSES } = require("../constants/asset.constants");
-const { canAccessModule } = require("../constants/permissions");
+const { canAccessModule, canView } = require("../constants/permissions");
 const { ApiError } = require("../utils/ApiError");
 const { verifyAuthToken } = require("../utils/jwt");
 
@@ -85,10 +85,30 @@ function hasPermission(permission) {
   };
 }
 
+function requirePermission(permission) {
+  return hasPermission(permission);
+}
+
+function requireViewAccess(moduleName) {
+  return function viewAccessGuard(req, _res, next) {
+    if (!req.user) {
+      return next(new ApiError(401, "Authentication required"));
+    }
+
+    if (!canView(req.user, moduleName)) {
+      return next(new ApiError(403, "Missing required view access"));
+    }
+
+    return next();
+  };
+}
+
 module.exports = {
   attachUserFromToken,
   requireAuth,
   requireRole,
   requireModuleAccess,
   hasPermission,
+  requirePermission,
+  requireViewAccess,
 };

@@ -168,7 +168,7 @@ export function getAssetsByUser(userId) {
   return request(`/assets/by-user/${encodeURIComponent(userId)}`);
 }
 
-// SUPER_ADMIN-only (Device Info module): paginated assets
+// Device Info list: all assets for SUPER_ADMIN, only assigned assets for everyone else
 export function getAssets({ page = 1, limit = 10, search = "" } = {}) {
   const params = new URLSearchParams();
   params.set("page", String(page));
@@ -177,7 +177,7 @@ export function getAssets({ page = 1, limit = 10, search = "" } = {}) {
   return request(`/assets?${params.toString()}`);
 }
 
-// SUPER_ADMIN-only (Device Info module): details + history
+// Device Info details: backend enforces role-aware ownership checks
 export function getAssetDetails(assetId) {
   return request(`/assets/${encodeURIComponent(assetId)}/details`);
 }

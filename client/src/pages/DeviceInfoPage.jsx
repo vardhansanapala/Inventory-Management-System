@@ -5,6 +5,7 @@ import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
+import { useAuth } from "../context/AuthContext";
 import { getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 
 const HISTORY_PREVIEW_COUNT = 5;
@@ -121,6 +122,7 @@ function HistoryEvent({ event, isLatest = false }) {
 }
 
 export function DeviceInfoPage() {
+  const { user } = useAuth();
   const { assetId: routeAssetId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
@@ -260,7 +262,7 @@ export function DeviceInfoPage() {
       <SectionCard
         title="Device Info"
         subtitle="Super-admin visibility into all devices, with searchable registry and detailed history."
-        actions={<span className="role-chip">SUPER ADMIN</span>}
+        actions={<span className="role-chip">{user?.role || "-"}</span>}
       >
         <div className="device-info-toolbar">
           <input

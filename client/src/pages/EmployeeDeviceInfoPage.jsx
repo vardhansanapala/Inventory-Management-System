@@ -5,6 +5,7 @@ import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
+import { useAuth } from "../context/AuthContext";
 import { getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 
 function formatTimestamp(value) {
@@ -109,6 +110,7 @@ export function EmployeeDeviceTimelineEvent({ event, isLatest }) {
 }
 
 export function EmployeeDeviceInfoPage() {
+  const { user } = useAuth();
   const { assetId: routeAssetId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [assets, setAssets] = useState([]);
@@ -213,8 +215,8 @@ export function EmployeeDeviceInfoPage() {
 
       <SectionCard
         title="Device Info"
-        subtitle="View the devices currently assigned to you and review their recent activity."
-        actions={<span className="role-chip">EMPLOYEE</span>}
+        subtitle="View the devices currently assigned to your account and review their recent activity."
+        actions={<span className="role-chip">{user?.role || "-"}</span>}
       >
         <div className="employee-device-intro">
           <div>
@@ -261,7 +263,7 @@ export function EmployeeDeviceInfoPage() {
             ))}
           </div>
         ) : (
-          <div className="empty-state">No devices are currently assigned to you.</div>
+          <div className="empty-state">No devices assigned.</div>
         )}
       </SectionCard>
 

@@ -9,14 +9,14 @@ const {
   deleteUser,
 } = require("../controllers/user.controller");
 const { MODULE_KEYS, PERMISSIONS } = require("../constants/permissions");
-const { requireAuth, requireModuleAccess } = require("../middleware/auth");
+const { requireAuth, requireModuleAccess, requireViewAccess } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/authorize");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
 router.use(requireAuth, requireModuleAccess(MODULE_KEYS.USERS));
-router.get("/", asyncHandler(listUsers));
+router.get("/", requireViewAccess("USER"), asyncHandler(listUsers));
 router.post("/", requirePermission(PERMISSIONS.CREATE_USER), asyncHandler(createUser));
 router.patch("/:id", requirePermission(PERMISSIONS.EDIT_USER), asyncHandler(updateUser));
 router.patch("/:id/reset-password", requirePermission(PERMISSIONS.RESET_PASSWORD), asyncHandler(resetUserPassword));

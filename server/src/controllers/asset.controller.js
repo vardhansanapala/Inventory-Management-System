@@ -11,7 +11,7 @@ const { createAssetWithQr, regenerateAssetQr } = require("../services/assetCreat
 const { deleteObjectIfExists } = require("../services/s3.service");
 const { applyAssetAction } = require("../services/assetAction.service");
 const { normalizeAction } = require("../services/assetState.service");
-const { PERMISSIONS } = require("../constants/permissions");
+const { PERMISSIONS, canView } = require("../constants/permissions");
 const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
 
 const MAX_TRANSACTION_RETRIES = 3;
@@ -120,15 +120,53 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function listAssets(req, res) {
-  const hasPaginationParams = req.query.page !== undefined || req.query.limit !== undefined;
-  if (hasPaginationParams && req.user?.role !== "SUPER_ADMIN") {
-    throw new ApiError(403, "Only super admins can access paginated device info");
-  }
+function hasViewAssetPermission(req) {
+  return canView(req.user, "ASSET");
+}
 
+function assertViewAssetPermission(req) {
+  if (!hasViewAssetPermission(req)) {
+    throw new ApiError(403, "Missing required asset view access");
+  }
+}
+
+function isSuperAdmin(user) {
+  return user?.role === "SUPER_ADMIN";
+}
+
+function getAccessibleAssetFilter(req, extraFilter = {}) {
   const filter = {
     isDeleted: false,
+    ...extraFilter,
   };
+
+  if (!isSuperAdmin(req.user)) {
+    filter.assignedTo = req.user?._id || null;
+  }
+
+  return filter;
+}
+
+function assertAssetOwnership(req, asset) {
+  if (!asset) {
+    throw new ApiError(404, "Asset not found");
+  }
+
+  if (isSuperAdmin(req.user)) {
+    return;
+  }
+
+  const assignedToId = asset.assignedTo?._id || asset.assignedTo || null;
+  if (String(assignedToId || "") !== String(req.user?._id || "")) {
+    throw new ApiError(404, "Asset not found");
+  }
+}
+
+async function listAssets(req, res) {
+  assertViewAssetPermission(req);
+
+  const hasPaginationParams = req.query.page !== undefined || req.query.limit !== undefined;
+  const filter = getAccessibleAssetFilter(req);
 
   if (req.query.status) {
     filter.status = req.query.status;
@@ -195,15 +233,14 @@ async function listAssets(req, res) {
 }
 
 async function listMyAssets(req, res) {
+  assertViewAssetPermission(req);
+
   const userId = req.user?._id;
   if (!userId) {
     throw new ApiError(401, "Authentication required");
   }
 
-  const assets = await Asset.find({
-    assignedTo: userId,
-    isDeleted: false,
-  })
+  const assets = await Asset.find(getAccessibleAssetFilter(req, { assignedTo: userId }))
     .sort({ createdAt: -1 })
     .populate("product")
     .populate("location")
@@ -251,10 +288,16 @@ async function listMyAssets(req, res) {
 }
 
 async function listAssetsByUser(req, res) {
+  assertViewAssetPermission(req);
+
   const { userId } = req.params;
 
   if (!isValidObjectId(userId)) {
     throw new ApiError(400, "Invalid user id");
+  }
+
+  if (!isSuperAdmin(req.user)) {
+    throw new ApiError(403, "You do not have access to this device list");
   }
 
   const assets = await Asset.find({
@@ -270,18 +313,14 @@ async function listAssetsByUser(req, res) {
 }
 
 async function getAssetDetails(req, res) {
-  if (req.user?.role !== "SUPER_ADMIN") {
-    throw new ApiError(403, "Only super admins can access device info details");
-  }
+  assertViewAssetPermission(req);
 
   const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
 
-  if (!asset) {
-    throw new ApiError(404, "Asset not found");
-  }
+  assertAssetOwnership(req, asset);
 
   const logs = await AuditLog.find({
     asset: asset._id,
@@ -362,14 +401,14 @@ function buildAssetLookupQuery(identifier) {
 }
 
 async function getAssetById(req, res) {
+  assertViewAssetPermission(req);
+
   const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")
     .populate("location")
     .populate("assignedTo", "firstName lastName email");
 
-  if (!asset) {
-    throw new ApiError(404, "Asset not found");
-  }
+  assertAssetOwnership(req, asset);
 
   res.json(serializeAsset(asset));
 }
@@ -436,11 +475,11 @@ async function regenerateAssetQrCode(req, res) {
 }
 
 async function getAssetAuditLogs(req, res) {
-  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).select("_id");
+  assertViewAssetPermission(req);
 
-  if (!asset) {
-    throw new ApiError(404, "Asset not found");
-  }
+  const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId)).select("_id assignedTo");
+
+  assertAssetOwnership(req, asset);
 
   const logs = await AuditLog.find({
     asset: asset._id,

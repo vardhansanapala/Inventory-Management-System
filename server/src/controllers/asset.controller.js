@@ -1,5 +1,5 @@
 const { isValidObjectId, startSession } = require("mongoose");
-const { ACTION_REASONS, ASSET_STATUSES } = require("../constants/asset.constants");
+const { ACTION_REASONS, ASSET_ACTIONS, ASSET_STATUSES } = require("../constants/asset.constants");
 const { Asset } = require("../models/Asset");
 const { AuditLog } = require("../models/AuditLog");
 const { Location } = require("../models/Location");
@@ -82,6 +82,18 @@ async function getAssetBootstrap(req, res) {
 
 function resolveActorId(req) {
   return req.user?._id || null;
+}
+
+function assertAssetActionPermission(req, action) {
+  const normalizedAction = normalizeAction(action);
+  const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+  const requiredPermission = normalizedAction === ASSET_ACTIONS.ASSIGN_DEVICE
+    ? PERMISSIONS.ASSIGN_ASSET
+    : PERMISSIONS.UPDATE_ASSET;
+
+  if (!permissions.includes(requiredPermission)) {
+    throw new ApiError(403, `Missing permission: ${requiredPermission}`);
+  }
 }
 
 function serializeAsset(asset) {
@@ -500,6 +512,7 @@ async function performAssetAction(req, res) {
   }
 
   const actionName = normalizeAction(req.body.action);
+  assertAssetActionPermission(req, actionName);
 
   const result = await runAssetActionTransaction(async (session) => {
     const actionResult = await applyAssetAction({

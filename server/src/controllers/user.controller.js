@@ -138,8 +138,7 @@ async function createUser(req, res) {
   if (requestedPermissions !== undefined && actor.role !== USER_ROLES.SUPER_ADMIN) {
     throw new ApiError(403, "Only super admins can set custom permissions");
   }
-  const permissions =
-    !requestedPermissions || requestedPermissions.length === 0 ? defaults.permissions : requestedPermissions;
+  const permissions = requestedPermissions !== undefined ? requestedPermissions : defaults.permissions;
 
   const requestedManageableRoles = Array.isArray(req.body.manageableRoles) ? req.body.manageableRoles : [];
   const manageableRoles =
@@ -302,12 +301,7 @@ async function updateUser(req, res) {
     }
 
     const requestedPermissions = normalizeRequestedPermissions(req.body.permissions) || [];
-    const defaults = getRoleDefaults(user.role);
-    user.permissions = requestedPermissions.length ? requestedPermissions : defaults.permissions;
-  } else if (req.body.role !== undefined) {
-    // If role changes and permissions weren't explicitly provided, reset to role defaults.
-    const defaults = getRoleDefaults(user.role);
-    user.permissions = defaults.permissions;
+    user.permissions = requestedPermissions;
   }
 
   if (req.body.status !== undefined) {

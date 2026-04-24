@@ -33,19 +33,17 @@ router.patch("/:assetId", hasPermission(PERMISSIONS.UPDATE_ASSET), asyncHandler(
 router.delete("/:assetId", hasPermission(PERMISSIONS.DELETE_ASSET), asyncHandler(deleteAsset));
 router.post(
   "/",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  hasPermission(PERMISSIONS.CREATE_ASSET),
   asyncHandler(createAsset)
 );
 router.post(
   "/:assetId/regenerate-qr",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  hasPermission(PERMISSIONS.UPDATE_ASSET),
   asyncHandler(regenerateAssetQrCode)
 );
 router.get("/:assetId/audit-logs", asyncHandler(getAssetAuditLogs));
 router.post(
   "/:assetId/action",
-  hasPermission(PERMISSIONS.ASSIGN_ASSET),
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
   asyncHandler(performAssetAction)
 );
 

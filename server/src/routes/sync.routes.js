@@ -1,7 +1,8 @@
 const express = require("express");
 const { syncOfflineActions } = require("../controllers/sync.controller");
-const { USER_ROLES } = require("../constants/asset.constants");
-const { requireAuth, requireRole } = require("../middleware/auth");
+const { PERMISSIONS } = require("../constants/permissions");
+const { requireAuth } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/authorize");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
@@ -9,7 +10,7 @@ const router = express.Router();
 router.use(requireAuth);
 router.post(
   "/offline-actions",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  requirePermission(PERMISSIONS.UPDATE_ASSET),
   asyncHandler(syncOfflineActions)
 );
 

@@ -28,14 +28,6 @@ const MODULE_KEYS = {
   USERS: "USERS",
 };
 
-const MODULE_ACCESS = {
-  [MODULE_KEYS.DASHBOARD]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE],
-  [MODULE_KEYS.ASSETS]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN],
-  [MODULE_KEYS.LOGS]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE],
-  [MODULE_KEYS.SETUP]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN],
-  [MODULE_KEYS.USERS]: [USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN],
-};
-
 const ROLE_DEFAULTS = {
   [USER_ROLES.SUPER_ADMIN]: {
     manageableRoles: [USER_ROLES.ADMIN, USER_ROLES.EMPLOYEE],
@@ -109,8 +101,7 @@ function canAccessModule(userOrRole, moduleKey) {
     }
   }
 
-  // Fallback to role-based access (kept for compatibility and emergencies).
-  return Boolean(role && MODULE_ACCESS[moduleKey]?.includes(role));
+  return false;
 }
 
 function getRoleDefaults(role) {
@@ -120,7 +111,6 @@ function getRoleDefaults(role) {
 module.exports = {
   PERMISSIONS,
   MODULE_KEYS,
-  MODULE_ACCESS,
   canAccessModule,
   ROLE_DEFAULTS,
   getRoleDefaults,

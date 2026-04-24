@@ -13,8 +13,9 @@ const {
   deleteProduct,
 } = require("../controllers/setup.controller");
 const { USER_ROLES } = require("../constants/asset.constants");
-const { MODULE_KEYS } = require("../constants/permissions");
+const { MODULE_KEYS, PERMISSIONS } = require("../constants/permissions");
 const { requireAuth, requireModuleAccess, requireRole } = require("../middleware/auth");
+const { requirePermission } = require("../middleware/authorize");
 
 const router = express.Router();
 
@@ -52,17 +53,17 @@ router.delete(
 );
 router.post(
   "/products",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  requirePermission(PERMISSIONS.CREATE_PRODUCT),
   asyncHandler(createProduct)
 );
 router.patch(
   "/products/:id",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  requirePermission(PERMISSIONS.EDIT_PRODUCT),
   asyncHandler(updateProduct)
 );
 router.delete(
   "/products/:id",
-  requireRole(USER_ROLES.SUPER_ADMIN, USER_ROLES.ADMIN),
+  requirePermission(PERMISSIONS.DELETE_PRODUCT),
   asyncHandler(deleteProduct)
 );
 

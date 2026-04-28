@@ -2,7 +2,6 @@ const { USER_ROLES } = require("./asset.constants");
 
 const PERMISSIONS = {
   // USER
-  VIEW_USER: "VIEW_USER",
   CREATE_USER: "CREATE_USER",
   EDIT_USER: "EDIT_USER",
   DELETE_USER: "DELETE_USER",
@@ -13,10 +12,8 @@ const PERMISSIONS = {
   UPDATE_ASSET: "UPDATE_ASSET",
   DELETE_ASSET: "DELETE_ASSET",
   ASSIGN_ASSET: "ASSIGN_ASSET",
-  VIEW_ASSET: "VIEW_ASSET",
 
   // PRODUCT
-  VIEW_PRODUCT: "VIEW_PRODUCT",
   CREATE_PRODUCT: "CREATE_PRODUCT",
   EDIT_PRODUCT: "EDIT_PRODUCT",
   DELETE_PRODUCT: "DELETE_PRODUCT",
@@ -39,9 +36,6 @@ const ROLE_DEFAULTS = {
   [USER_ROLES.ADMIN]: {
     manageableRoles: [USER_ROLES.EMPLOYEE],
     permissions: [
-      PERMISSIONS.VIEW_ASSET,
-      PERMISSIONS.VIEW_PRODUCT,
-      PERMISSIONS.VIEW_USER,
       PERMISSIONS.CREATE_ASSET,
       PERMISSIONS.UPDATE_ASSET,
       PERMISSIONS.DELETE_ASSET,
@@ -53,9 +47,7 @@ const ROLE_DEFAULTS = {
   },
   [USER_ROLES.EMPLOYEE]: {
     manageableRoles: [],
-    permissions: [
-      PERMISSIONS.VIEW_ASSET,
-    ],
+    permissions: [],
   },
 };
 
@@ -64,25 +56,23 @@ function hasAnyPermission(user, needed = []) {
   return needed.some((perm) => perms.includes(perm));
 }
 
-const MODULE_PERMISSION_MAP = {
+const MODULE_WRITE_PERMISSION_MAP = {
   ASSET: [
-    PERMISSIONS.VIEW_ASSET,
     PERMISSIONS.CREATE_ASSET,
     PERMISSIONS.UPDATE_ASSET,
     PERMISSIONS.DELETE_ASSET,
     PERMISSIONS.ASSIGN_ASSET,
   ],
   PRODUCT: [
-    PERMISSIONS.VIEW_PRODUCT,
     PERMISSIONS.CREATE_PRODUCT,
     PERMISSIONS.EDIT_PRODUCT,
     PERMISSIONS.DELETE_PRODUCT,
   ],
   USER: [
-    PERMISSIONS.VIEW_USER,
     PERMISSIONS.CREATE_USER,
     PERMISSIONS.EDIT_USER,
     PERMISSIONS.DELETE_USER,
+    PERMISSIONS.RESET_PASSWORD,
   ],
 };
 
@@ -90,12 +80,12 @@ function normalizePermissionModule(moduleName) {
   return String(moduleName || "").trim().toUpperCase();
 }
 
-function getViewablePermissions(moduleName) {
-  return MODULE_PERMISSION_MAP[normalizePermissionModule(moduleName)] || [];
+function getWritePermissionsForModule(moduleName) {
+  return MODULE_WRITE_PERMISSION_MAP[normalizePermissionModule(moduleName)] || [];
 }
 
-function canView(user, moduleName) {
-  return hasAnyPermission(user, getViewablePermissions(moduleName));
+function hasAnyWritePermission(user, moduleName) {
+  return hasAnyPermission(user, getWritePermissionsForModule(moduleName));
 }
 
 function canAccessModule(userOrRole, moduleKey) {
@@ -113,19 +103,19 @@ function canAccessModule(userOrRole, moduleKey) {
   // Prefer permission-driven module access when a user object is available.
   if (user) {
     if (moduleKey === MODULE_KEYS.ASSETS) {
-      return canView(user, "ASSET");
+      return hasAnyWritePermission(user, "ASSET");
     }
 
     if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
-      return canView(user, "ASSET");
+      return hasAnyWritePermission(user, "ASSET");
     }
 
     if (moduleKey === MODULE_KEYS.SETUP) {
-      return canView(user, "PRODUCT");
+      return hasAnyWritePermission(user, "PRODUCT");
     }
 
     if (moduleKey === MODULE_KEYS.USERS) {
-      return canView(user, "USER");
+      return hasAnyWritePermission(user, "USER");
     }
   }
 
@@ -139,7 +129,7 @@ function getRoleDefaults(role) {
 module.exports = {
   PERMISSIONS,
   MODULE_KEYS,
-  canView,
+  hasAnyWritePermission,
   canAccessModule,
   ROLE_DEFAULTS,
   getRoleDefaults,

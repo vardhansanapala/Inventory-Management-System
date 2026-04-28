@@ -439,23 +439,18 @@ async function resetUserPassword(req, res) {
   }
 
   const actor = req.user;
+
+  if (user.role === USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "SUPER_ADMIN password cannot be reset");
+  }
+
   const actorPermissions = Array.isArray(actor.permissions) ? actor.permissions : [];
   if (!actorPermissions.includes(PERMISSIONS.RESET_PASSWORD)) {
     throw new ApiError(403, "Missing permission: RESET_PASSWORD");
   }
 
-  if (user.role === USER_ROLES.SUPER_ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
-    throw new ApiError(403, "You cannot reset a super admin password");
-  }
-
-  const actorManageableRoles = Array.isArray(actor.manageableRoles) ? actor.manageableRoles : [];
-  if (!actorManageableRoles.includes(user.role)) {
-    throw new ApiError(403, "You are not allowed to reset passwords for this role");
-  }
-
-  const isOwner = String(user.createdBy || "") === String(actor._id);
-  if (actor.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
-    throw new ApiError(403, "You can only reset passwords for users you created");
+  if (user.role === USER_ROLES.ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "Only SUPER_ADMIN can reset ADMIN password");
   }
 
   const newPassword = String(req.body.password || req.body.newPassword || "");
@@ -615,6 +610,7 @@ async function resumeUser(req, res) {
 }
 
 async function deleteUser(req, res) {
+  const actor = req.user;
   const user = await User.findOne({
     _id: req.params.id,
     status: { $ne: USER_STATUSES.DELETED },
@@ -624,21 +620,20 @@ async function deleteUser(req, res) {
     throw new ApiError(404, "User not found");
   }
 
-  const actorPermissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+  if (user.role === USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "SUPER_ADMIN cannot be deleted");
+  }
+
+  const actorPermissions = Array.isArray(actor.permissions) ? actor.permissions : [];
   if (!actorPermissions.includes(PERMISSIONS.DELETE_USER)) {
     throw new ApiError(403, "Missing permission: DELETE_USER");
   }
 
-  if (user.role === USER_ROLES.SUPER_ADMIN) {
-    throw new ApiError(403, "Super admin accounts cannot be deleted");
+  if (user.role === USER_ROLES.ADMIN && actor.role !== USER_ROLES.SUPER_ADMIN) {
+    throw new ApiError(403, "Only SUPER_ADMIN can delete ADMIN");
   }
 
-  const isOwner = String(user.createdBy || "") === String(req.user._id);
-  if (req.user.role !== USER_ROLES.SUPER_ADMIN && !isOwner) {
-    throw new ApiError(403, "You can only delete users you created");
-  }
-
-  if (String(req.user._id) === String(user._id)) {
+  if (String(actor._id) === String(user._id)) {
     throw new ApiError(400, "You cannot delete your own account");
   }
 
@@ -649,7 +644,7 @@ async function deleteUser(req, res) {
 
   await createUserAuditLog({
     actionType: USER_AUDIT_ACTIONS.USER_DELETED,
-    performedBy: req.user._id,
+    performedBy: actor._id,
     targetUserId: user._id,
     metadata: {
       email: user.email,
@@ -659,7 +654,7 @@ async function deleteUser(req, res) {
 
   await RbacAuditLog.create({
     action: "USER_DELETED",
-    performedBy: req.user._id,
+    performedBy: actor._id,
     targetId: user._id,
     targetType: RBAC_AUDIT_TARGET_TYPES.USER,
     metadata: {

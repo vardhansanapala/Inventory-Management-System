@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAssetsByUser } from "../api/inventory";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
-import { PERMISSIONS, hasPermission } from "../constants/permissions";
+import { PERMISSIONS, hasAnyWritePermission, hasPermission } from "../constants/permissions";
 import { Modal } from "./Modal";
 import { StatusPill } from "./StatusPill";
 
@@ -31,7 +31,7 @@ export function UserAssignedAssetsModal({ currentUser, targetUser, onClose }) {
   const [error, setError] = useState("");
   const [selectedAssetId, setSelectedAssetId] = useState("");
 
-  const canOpenAssets = hasPermission(currentUser, PERMISSIONS.VIEW_ASSET);
+  const canOpenAssets = hasAnyWritePermission(currentUser, "ASSET");
   const canAssignAsset = hasPermission(currentUser, PERMISSIONS.ASSIGN_ASSET);
   const canManageInWorkspace = canOpenAssets || canAssignAsset;
   const selectedAsset = assets.find((asset) => String(asset._id) === String(selectedAssetId)) || assets[0] || null;

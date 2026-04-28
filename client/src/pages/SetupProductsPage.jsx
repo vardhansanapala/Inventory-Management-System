@@ -15,11 +15,14 @@ import {
   useDebouncedValue,
   useSetupPageContext,
 } from "../components/setup/SetupShared";
+import { PERMISSIONS, hasPermission } from "../constants/permissions";
+import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
 import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
 
 export function SetupProductsPage() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const { setupData, refreshSetupData, isSuperAdmin } = useSetupPageContext();
   const [busyKey, setBusyKey] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -42,6 +45,9 @@ export function SetupProductsPage() {
   const modalFeedback = useActionFeedback();
   const deleteFeedback = useActionFeedback();
   const debouncedSearch = useDebouncedValue(searchInput, 300);
+  const canCreateProduct = hasPermission(currentUser, PERMISSIONS.CREATE_PRODUCT);
+  const canEditProduct = hasPermission(currentUser, PERMISSIONS.EDIT_PRODUCT);
+  const canDeleteProduct = hasPermission(currentUser, PERMISSIONS.DELETE_PRODUCT);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -161,39 +167,47 @@ export function SetupProductsPage() {
     {
       key: "actions",
       header: "Actions",
-      render: (row) => (
-        <ActionMenu
-          label="Product actions"
-          items={[
-            {
-              id: "edit",
-              label: "Edit Product",
-              icon: "E",
-              onClick: () => {
-                modalFeedback.clear();
-                setEditingProduct(row);
-                setEditProductForm({
-                  categoryId: row.category?._id || "",
-                  brand: row.brand || "",
-                  model: row.model || "",
-                  sku: row.sku || "",
-                  description: row.description || "",
-                });
+      render: (row) => {
+        if (!canEditProduct && !canDeleteProduct) {
+          return <span className="table-subtle">-</span>;
+        }
+
+        return (
+          <ActionMenu
+            label="Product actions"
+            items={[
+              {
+                id: "edit",
+                label: "Edit Product",
+                icon: "E",
+                hidden: !canEditProduct,
+                onClick: () => {
+                  modalFeedback.clear();
+                  setEditingProduct(row);
+                  setEditProductForm({
+                    categoryId: row.category?._id || "",
+                    brand: row.brand || "",
+                    model: row.model || "",
+                    sku: row.sku || "",
+                    description: row.description || "",
+                  });
+                },
               },
-            },
-            {
-              id: "delete",
-              label: "Delete Product",
-              icon: "X",
-              danger: true,
-              onClick: () => {
-                deleteFeedback.clear();
-                setDeletingProduct(row);
+              {
+                id: "delete",
+                label: "Delete Product",
+                icon: "X",
+                danger: true,
+                hidden: !canDeleteProduct,
+                onClick: () => {
+                  deleteFeedback.clear();
+                  setDeletingProduct(row);
+                },
               },
-            },
-          ]}
-        />
-      ),
+            ]}
+          />
+        );
+      },
     },
   ];
 
@@ -246,9 +260,11 @@ export function SetupProductsPage() {
         }
         summary={`Showing ${paginatedProducts.length} of ${filteredProducts.length} products`}
         action={
-          <button className="button dark button-rect" type="button" onClick={() => navigate("/setup/products/create")}>
-            Create Product
-          </button>
+          canCreateProduct ? (
+            <button className="button dark button-rect" type="button" onClick={() => navigate("/setup/products/create")}>
+              Create Product
+            </button>
+          ) : null
         }
       />
 

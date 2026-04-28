@@ -12,7 +12,6 @@ export const MODULE_KEYS = {
 
 export const PERMISSIONS = {
   // USER
-  VIEW_USER: "VIEW_USER",
   CREATE_USER: "CREATE_USER",
   EDIT_USER: "EDIT_USER",
   DELETE_USER: "DELETE_USER",
@@ -23,10 +22,8 @@ export const PERMISSIONS = {
   UPDATE_ASSET: "UPDATE_ASSET",
   DELETE_ASSET: "DELETE_ASSET",
   ASSIGN_ASSET: "ASSIGN_ASSET",
-  VIEW_ASSET: "VIEW_ASSET",
 
   // PRODUCT
-  VIEW_PRODUCT: "VIEW_PRODUCT",
   CREATE_PRODUCT: "CREATE_PRODUCT",
   EDIT_PRODUCT: "EDIT_PRODUCT",
   DELETE_PRODUCT: "DELETE_PRODUCT",
@@ -40,9 +37,6 @@ export const ROLE_DEFAULTS = {
   [ROLES.ADMIN]: {
     manageableRoles: [ROLES.EMPLOYEE],
     permissions: [
-      PERMISSIONS.VIEW_ASSET,
-      PERMISSIONS.VIEW_PRODUCT,
-      PERMISSIONS.VIEW_USER,
       PERMISSIONS.CREATE_ASSET,
       PERMISSIONS.UPDATE_ASSET,
       PERMISSIONS.DELETE_ASSET,
@@ -54,7 +48,7 @@ export const ROLE_DEFAULTS = {
   },
   [ROLES.EMPLOYEE]: {
     manageableRoles: [],
-    permissions: [PERMISSIONS.VIEW_ASSET],
+    permissions: [],
   },
 };
 
@@ -71,20 +65,16 @@ export function canAccessModule(user, moduleKey) {
     return true;
   }
 
-  if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES) {
-    return hasAnyPermission(user, [PERMISSIONS.VIEW_ASSET, PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.ASSIGN_ASSET]);
+  if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES || moduleKey === MODULE_KEYS.DEVICE_INFO) {
+    return hasAnyWritePermission(user, "ASSET");
   }
 
   if (moduleKey === MODULE_KEYS.SETUP) {
-    return hasAnyPermission(user, [PERMISSIONS.VIEW_PRODUCT, PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT]);
+    return hasAnyWritePermission(user, "PRODUCT");
   }
 
   if (moduleKey === MODULE_KEYS.USERS) {
-    return hasAnyPermission(user, [PERMISSIONS.VIEW_USER, PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD]);
-  }
-
-  if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
-    return hasPermission(user, PERMISSIONS.VIEW_ASSET);
+    return hasAnyWritePermission(user, "USER");
   }
 
   return false;
@@ -99,6 +89,17 @@ export function hasPermission(user, permission) {
   return perms.includes(permission);
 }
 
+const MODULE_WRITE_PERMISSION_MAP = {
+  ASSET: [PERMISSIONS.CREATE_ASSET, PERMISSIONS.UPDATE_ASSET, PERMISSIONS.DELETE_ASSET, PERMISSIONS.ASSIGN_ASSET],
+  PRODUCT: [PERMISSIONS.CREATE_PRODUCT, PERMISSIONS.EDIT_PRODUCT, PERMISSIONS.DELETE_PRODUCT],
+  USER: [PERMISSIONS.CREATE_USER, PERMISSIONS.EDIT_USER, PERMISSIONS.DELETE_USER, PERMISSIONS.RESET_PASSWORD],
+};
+
+export function hasAnyWritePermission(user, moduleName) {
+  const key = String(moduleName || "").trim().toUpperCase();
+  return hasAnyPermission(user, MODULE_WRITE_PERMISSION_MAP[key] || []);
+}
+
 export function getVisibleSidebarLinks(user) {
   const links = [
     { to: "/", label: "Dashboard", moduleKey: MODULE_KEYS.DASHBOARD },
@@ -111,6 +112,10 @@ export function getVisibleSidebarLinks(user) {
   ];
 
   return links.filter((link) => {
+    if (link.moduleKey === MODULE_KEYS.DEVICES && user?.role === ROLES.EMPLOYEE) {
+      return false;
+    }
+
     return canAccessModule(user, link.moduleKey);
   });
 }

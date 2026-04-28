@@ -14,13 +14,13 @@ const {
 } = require("../controllers/setup.controller");
 const { USER_ROLES } = require("../constants/asset.constants");
 const { MODULE_KEYS, PERMISSIONS } = require("../constants/permissions");
-const { requireAuth, requireModuleAccess, requireRole, requireViewAccess } = require("../middleware/auth");
+const { requireAuth, requireModuleAccess, requireRole, requireAnyWriteAccess } = require("../middleware/auth");
 const { requirePermission } = require("../middleware/authorize");
 
 const router = express.Router();
 
 router.use(requireAuth, requireModuleAccess(MODULE_KEYS.SETUP));
-router.get("/bootstrap", requireViewAccess("PRODUCT"), asyncHandler(getSetupBootstrap));
+router.get("/bootstrap", requireAnyWriteAccess("PRODUCT"), asyncHandler(getSetupBootstrap));
 router.post(
   "/categories",
   requireRole(USER_ROLES.SUPER_ADMIN),

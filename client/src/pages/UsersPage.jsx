@@ -28,6 +28,7 @@ import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 import { useActionFeedback } from "../hooks/useActionFeedback";
 import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
+import { hasAnyWritePermission } from "../constants/permissions";
 
 const USERS_PER_PAGE = 10;
 
@@ -56,7 +57,7 @@ export function UsersPage() {
   const canEditUser = hasPermission(currentUser, PERMISSIONS.EDIT_USER);
   const canDeleteUser = hasPermission(currentUser, PERMISSIONS.DELETE_USER);
   const canResetPassword = hasPermission(currentUser, PERMISSIONS.RESET_PASSWORD);
-  const canViewAssignedDevices = currentUser?.role === ROLES.ADMIN || currentUser?.role === ROLES.SUPER_ADMIN;
+  const canViewAssignedDevices = hasAnyWritePermission(currentUser, "ASSET");
   const canSeeUserActions = canEditUser || canDeleteUser || canResetPassword;
   const showUserActionsColumn = canSeeUserActions || canViewAssignedDevices;
 
@@ -417,8 +418,11 @@ export function UsersPage() {
                 paginatedUsers.map((targetUser) => {
                   const isSelf = String(targetUser._id) === String(currentUser?._id);
                   const isLockedSuperAdmin = targetUser.role === ROLES.SUPER_ADMIN;
+                  const isAdminTarget = targetUser.role === ROLES.ADMIN;
+                  const isAdminActor = currentUser?.role === ROLES.ADMIN;
                   const canPauseResume = !isSelf;
-                  const canDelete = !isSelf;
+                  const canResetTarget = !isLockedSuperAdmin && !(isAdminActor && isAdminTarget);
+                  const canDelete = !isSelf && !isLockedSuperAdmin && !(isAdminActor && isAdminTarget);
                   const updatedTime = getSortableTime(getLastUpdatedValue(targetUser));
                   const isRecentlyUpdated = updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000;
 
@@ -471,7 +475,7 @@ export function UsersPage() {
                                       id: "reset",
                                       label: "Reset Password",
                                       icon: "R",
-                                      hidden: !canResetPassword,
+                                      hidden: !canResetPassword || !canResetTarget,
                                       onClick: () => openResetModal(targetUser),
                                     },
                                     {
@@ -619,7 +623,7 @@ export function UsersPage() {
                 </select>
                 {isEditingLockedSuperAdmin ? <span className="table-subtle">SUPER_ADMIN role is locked.</span> : null}
               </label>
-              {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
+              {/* {isSuperAdmin && editForm.role === ROLES.ADMIN ? (
                 <div className="field-stack users-edit-section">
                   <span>Manageable Roles</span>
                   <div className="mini-list users-manageable-list">
@@ -641,7 +645,7 @@ export function UsersPage() {
                     ))}
                   </div>
                 </div>
-              ) : null}
+              ) : null} */}
             </div>
             {isSuperAdmin ? (
               <div className="users-edit-perm-field">

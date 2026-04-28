@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getAssetAuditLogs, getAssetsBootstrap, getAssetsByUser, getMyAssets } from "../api/inventory";
+import { getAssetAuditLogs, getAssignedDevices } from "../api/inventory";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
-import { ROLES } from "../constants/roles";
 import { useAuth } from "../context/AuthContext";
 import { getAssetId, getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
 import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
@@ -39,7 +38,6 @@ function getAssetSearchText(asset) {
 
 export function DevicesPage() {
   const { user: currentUser } = useAuth();
-  const isEmployee = currentUser?.role === ROLES.EMPLOYEE;
 
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState("");
@@ -85,52 +83,33 @@ export function DevicesPage() {
     setError("");
 
     try {
-      if (isEmployee) {
-        const data = await getMyAssets();
-        const assignedAssets = (Array.isArray(data) ? data : [])
-          .filter((asset) => asset?.status === ASSIGNED_STATUS)
-          .map((asset) => ({
-            ...asset,
-            assignedTo: asset?.assignedTo || currentUser,
-          }));
+      const data = await getAssignedDevices();
+      const assignedAssets = (Array.isArray(data) ? data : [])
+        .filter((asset) => asset?.status === ASSIGNED_STATUS)
+        .map((asset) => ({
+          ...asset,
+          assignedTo: asset?.assignedTo || currentUser,
+        }));
 
-        setAssets(assignedAssets);
-        setUsers(currentUser ? [currentUser] : []);
-        setLocations(
-          Array.from(
-            new Map(
-              assignedAssets
-                .filter((asset) => asset?.location?._id)
-                .map((asset) => [asset.location._id, asset.location])
-            ).values()
-          )
-        );
-        return;
-      }
-
-      const bootstrap = await getAssetsBootstrap();
-      const bootstrapUsers = Array.isArray(bootstrap?.users) ? bootstrap.users : [];
-      const bootstrapLocations = Array.isArray(bootstrap?.locations) ? bootstrap.locations : [];
-
-      const pairs = await Promise.all(
-        bootstrapUsers.map(async (targetUser) => {
-          try {
-            const userAssets = await getAssetsByUser(targetUser._id);
-            return (Array.isArray(userAssets) ? userAssets : [])
-              .filter((asset) => asset?.status === ASSIGNED_STATUS)
-              .map((asset) => ({
-                ...asset,
-                assignedTo: asset?.assignedTo || targetUser,
-              }));
-          } catch {
-            return [];
-          }
-        })
+      setAssets(assignedAssets);
+      setUsers(
+        Array.from(
+          new Map(
+            assignedAssets
+              .filter((asset) => asset?.assignedTo?._id)
+              .map((asset) => [asset.assignedTo._id, asset.assignedTo])
+          ).values()
+        )
       );
-
-      setAssets(pairs.flat());
-      setUsers(bootstrapUsers);
-      setLocations(bootstrapLocations);
+      setLocations(
+        Array.from(
+          new Map(
+            assignedAssets
+              .filter((asset) => asset?.location?._id)
+              .map((asset) => [asset.location._id, asset.location])
+          ).values()
+        )
+      );
     } catch (err) {
       setError(err.message || "Unable to load devices.");
       setAssets([]);
@@ -139,7 +118,7 @@ export function DevicesPage() {
     } finally {
       setListLoading(false);
     }
-  }, [currentUser, isEmployee]);
+  }, [currentUser]);
 
   useEffect(() => {
     loadAssignedDevices();
@@ -208,9 +187,7 @@ export function DevicesPage() {
     };
   }, [selectedAsset?._id]);
 
-  const subtitle = isEmployee
-    ? "Assigned devices in one searchable list."
-    : "A flat view of all assigned devices with quick filtering by user and location.";
+  const subtitle = "A flat view of all assigned devices with quick filtering by user and location.";
 
   return (
     <div className="devices-page page-stack">
@@ -232,19 +209,17 @@ export function DevicesPage() {
               <option value="oldest">Oldest</option>
             </select>
           </label>
-          {!isEmployee ? (
-            <label className="field-stack devices-filter-field">
-              <span>User</span>
-              <select className="input" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-                <option value="ALL">ALL</option>
-                {users.map((targetUser) => (
-                  <option key={targetUser._id} value={targetUser._id}>
-                    {formatOwnerName(targetUser)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+          <label className="field-stack devices-filter-field">
+            <span>User</span>
+            <select className="input" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+              <option value="ALL">ALL</option>
+              {users.map((targetUser) => (
+                <option key={targetUser._id} value={targetUser._id}>
+                  {formatOwnerName(targetUser)}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="field-stack devices-filter-field">
             <span>Location</span>
             <select className="input" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>

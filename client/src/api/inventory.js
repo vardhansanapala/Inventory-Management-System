@@ -168,7 +168,10 @@ export function getAssetsByUser(userId) {
   return request(`/assets/by-user/${encodeURIComponent(userId)}`);
 }
 
-// Device Info list: all assets for SUPER_ADMIN, only assigned assets for everyone else
+export function getAssignedDevices() {
+  return request("/assets/assigned-devices");
+}
+
 export function getAssets({ page = 1, limit = 10, search = "" } = {}) {
   const params = new URLSearchParams();
   params.set("page", String(page));
@@ -204,6 +207,10 @@ export function deleteAsset(assetId) {
 
 export function getAssetById(assetId) {
   return request(`/assets/${encodeURIComponent(assetId)}`);
+}
+
+export function getAssetForAssign(assetId) {
+  return request(`/assets/${encodeURIComponent(assetId)}/assign`);
 }
 
 export function regenerateAssetQr(assetId) {

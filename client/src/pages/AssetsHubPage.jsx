@@ -1,4 +1,7 @@
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
+import { MODULE_KEYS, PERMISSIONS, canAccessModule, hasPermission } from "../constants/permissions";
+import { useAuth } from "../context/AuthContext";
 
 const hubCards = [
   {
@@ -29,6 +32,26 @@ const hubCards = [
 ];
 
 export function AssetsHubPage() {
+  const { user } = useAuth();
+
+  const visibleCards = useMemo(() => {
+    return hubCards.filter((card) => {
+      if (card.to.includes("tab=add")) {
+        return hasPermission(user, PERMISSIONS.CREATE_ASSET);
+      }
+
+      if (card.to.includes("tab=assign")) {
+        return hasPermission(user, PERMISSIONS.ASSIGN_ASSET) || hasPermission(user, PERMISSIONS.UPDATE_ASSET);
+      }
+
+      if (card.to === "/setup") {
+        return canAccessModule(user, MODULE_KEYS.SETUP);
+      }
+
+      return true;
+    });
+  }, [user]);
+
   return (
     <div className="assets-hub-wrap">
       <section className="section-card assets-hub">
@@ -40,7 +63,7 @@ export function AssetsHubPage() {
         </div>
 
         <div className="assets-hub-grid">
-          {hubCards.map((card) => (
+          {visibleCards.map((card) => (
             <Link key={card.title} to={card.to} className="assets-hub-card">
               <h3>{card.title}</h3>
               <p>{card.description}</p>

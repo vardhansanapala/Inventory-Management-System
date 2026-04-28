@@ -7,6 +7,7 @@ import {
   getAssetsBootstrap,
   getAssetAuditLogs,
   getAssetById,
+  getAssetForAssign,
   getAssetQrBlobUrl,
   listAssets,
   performAssetAction,
@@ -459,7 +460,7 @@ function renderActionFields({ action, actionForm, handleActionChange, selectedAs
   return null;
 }
 
-export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
+export function AssetsPage({ forcedTab = null, incomingAsset = null, assignSelectionUsesButton = false }) {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -710,11 +711,15 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
   }
 
   async function applySelectedAsset(asset, selectionMessage) {
-    const logs = await getAssetAuditLogs(asset._id);
     const assetId = getAssetId(asset);
     setSelectedAssetId(asset._id);
     setSelectedAsset(asset);
-    setAssetLogs(logs);
+    try {
+      const logs = await getAssetAuditLogs(asset._id);
+      setAssetLogs(logs);
+    } catch {
+      setAssetLogs([]);
+    }
     setAssignLookupInput(assetId);
 
     if (selectionMessage) {
@@ -777,7 +782,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     selectionFeedback.clear();
 
     try {
-      const asset = await getAssetById(assetId);
+      const asset = await getAssetForAssign(assetId);
       await applySelectedAsset(asset, `Selected ${getAssetId(asset)}. Actions now apply only to this device.`);
     } catch (err) {
       selectionFeedback.showError(err.message || "Unable to select device.");
@@ -788,7 +793,7 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     const assetIdentifier = extractAssetId(rawInput);
     if (!assetIdentifier) throw new Error("Enter a valid asset ID or scan URL.");
 
-    const asset = await getAssetById(assetIdentifier);
+    const asset = await getAssetForAssign(assetIdentifier);
     const resolvedAssetId = getAssetId(asset);
     const registrySearch = assets.some((item) => item._id === asset._id) ? search : resolvedAssetId;
     setAssignLookupInput(resolvedAssetId);
@@ -1000,11 +1005,11 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
     let isCancelled = false;
 
-    async function consumeIncomingAsset() {
-      try {
-        const asset = await getAssetById(pendingConsumeAssetId);
-        if (isCancelled) return;
-        await applySelectedAsset(asset);
+      async function consumeIncomingAsset() {
+        try {
+        const asset = await getAssetForAssign(pendingConsumeAssetId);
+          if (isCancelled) return;
+          await applySelectedAsset(asset);
       } catch (err) {
         if (isCancelled) return;
         selectionFeedback.showError(err.message || "Unable to load the selected device.");
@@ -1241,6 +1246,23 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
     }
   }
 
+  async function handleSelectDevice() {
+    const assetId = extractAssetId(assignLookupInput);
+    if (!assetId) return;
+
+    setBusyKey("assign-lookup");
+    selectionFeedback.clear();
+
+    try {
+      const res = { data: await getAssetForAssign(assetId) };
+      await applySelectedAsset(res.data, `Selected ${getAssetId(res.data)}. Actions now apply only to this device.`);
+    } catch (err) {
+      selectionFeedback.showError(err.message || "Device not found.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   async function handleSimulateScan() {
     if (busyKey === "assign-lookup") {
       return;
@@ -1303,8 +1325,12 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
       setSelectedAsset(result.asset);
       workflowFeedback.showSuccess(`${getAssetActionLabel(normalizedAction)} completed for ${getAssetId(result.asset)}.`);
       await loadAssets(buildAssetListFilters());
-      const logs = await getAssetAuditLogs(selectedAssetId);
-      setAssetLogs(logs);
+      try {
+        const logs = await getAssetAuditLogs(selectedAssetId);
+        setAssetLogs(logs);
+      } catch {
+        setAssetLogs([]);
+      }
     } catch (err) {
       // Revert optimistic update and show local inline error.
       setSelectedAsset(previousSelected);
@@ -1575,18 +1601,23 @@ export function AssetsPage({ forcedTab = null, incomingAsset = null }) {
 
                 {scanError ? <div className="page-message error">{scanError}</div> : null}
 
-                <form className="inline-form" onSubmit={handleAssignLookupSubmit}>
-                  <input
-                    ref={assignInputRef}
-                    className="input"
-                    placeholder="Paste an Asset ID or full scan URL"
-                    value={assignLookupInput}
-                    onChange={(event) => setAssignLookupInput(event.target.value)}
-                  />
-                  <button className="button dark with-spinner" type="submit" disabled={busyKey === "assign-lookup"}>
-                    {busyKey === "assign-lookup" ? <span className="button-spinner" aria-hidden /> : null}
-                    <span>{busyKey === "assign-lookup" ? "Selecting..." : "Select Device"}</span>
-                  </button>
+                  <form className="inline-form" onSubmit={assignSelectionUsesButton ? (event) => event.preventDefault() : handleAssignLookupSubmit}>
+                    <input
+                      ref={assignInputRef}
+                      className="input"
+                      placeholder="Paste an Asset ID or full scan URL"
+                      value={assignLookupInput}
+                      onChange={(event) => setAssignLookupInput(event.target.value)}
+                    />
+                    <button
+                      className="button dark with-spinner"
+                      type={assignSelectionUsesButton ? "button" : "submit"}
+                      onClick={assignSelectionUsesButton ? handleSelectDevice : undefined}
+                      disabled={busyKey === "assign-lookup"}
+                    >
+                      {busyKey === "assign-lookup" ? <span className="button-spinner" aria-hidden /> : null}
+                      <span>{busyKey === "assign-lookup" ? "Selecting..." : "Select Device"}</span>
+                    </button>
                   {/* <button className="button ghost" type="button" onClick={handleSimulateScan} disabled={busyKey === "assign-lookup"}>
                     Simulate Scan
                   </button> */}

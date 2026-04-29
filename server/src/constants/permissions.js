@@ -107,7 +107,7 @@ function canAccessModule(userOrRole, moduleKey) {
     }
 
     if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
-      return hasAnyWritePermission(user, "ASSET");
+      return Boolean(role);
     }
 
     if (moduleKey === MODULE_KEYS.SETUP) {

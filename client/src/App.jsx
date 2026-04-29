@@ -18,7 +18,6 @@ import { SetupProductsPage } from "./pages/SetupProductsPage";
 import { SetupProductCreatePage } from "./pages/SetupProductCreatePage";
 import { DeviceInfoPage } from "./pages/DeviceInfoPage";
 import { DevicesPage } from "./pages/DevicesPage";
-import { EmployeeDeviceInfoPage } from "./pages/EmployeeDeviceInfoPage";
 import { AssignDevicePage } from "./pages/AssignDevicePage";
 import { ScanRedirectPage } from "./pages/ScanRedirectPage";
 import { useAuth } from "./context/AuthContext";
@@ -112,7 +111,7 @@ export default function App() {
           path="/device-info"
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.DEVICE_INFO}>
-              {user?.role === ROLES.SUPER_ADMIN ? <DeviceInfoPage /> : <EmployeeDeviceInfoPage />}
+              <DeviceInfoPage />
             </ProtectedRoute>
           }
         />
@@ -120,7 +119,7 @@ export default function App() {
           path="/device-info/:assetId"
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.DEVICE_INFO}>
-              {user?.role === ROLES.SUPER_ADMIN ? <DeviceInfoPage /> : <EmployeeDeviceInfoPage />}
+              <DeviceInfoPage />
             </ProtectedRoute>
           }
         />

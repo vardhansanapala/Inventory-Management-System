@@ -58,11 +58,7 @@ async function getAssetBootstrap(req, res) {
   const [products, locations, users] = await Promise.all([
     Product.find({ isDeleted: false }).populate("category").sort({ sku: 1 }),
     Location.find({ isDeleted: false }).sort({ name: 1 }),
-    User.find({
-      isDeleted: false,
-      isActive: true,
-      status: { $in: ["ACTIVE", null] },
-    }).sort({ firstName: 1, lastName: 1 }),
+    User.find({ isDeleted: false }).sort({ firstName: 1, lastName: 1 }),
   ]);
 
   res.json({
@@ -125,6 +121,12 @@ function escapeRegex(value) {
 function assertAnyWriteAssetPermission(req) {
   if (!hasAnyWritePermission(req.user, "ASSET")) {
     throw new ApiError(403, "Missing required permission");
+  }
+}
+
+function assertAssetReadAccess(req) {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
   }
 }
 
@@ -200,12 +202,10 @@ function isHistoryLocationChanged(log) {
 }
 
 async function listAssets(req, res) {
-  assertAnyWriteAssetPermission(req);
+  assertAssetReadAccess(req);
 
   const hasPaginationParams = req.query.page !== undefined || req.query.limit !== undefined;
-  const filter = {
-    isDeleted: false,
-  };
+  const filter = getAccessibleAssetFilter(req);
 
   if (req.query.status) {
     filter.status = req.query.status;
@@ -291,7 +291,7 @@ async function listAssignedDevices(req, res) {
 }
 
 async function listMyAssets(req, res) {
-  assertAnyWriteAssetPermission(req);
+  assertAssetReadAccess(req);
 
   const userId = req.user?._id;
   if (!userId) {
@@ -371,7 +371,7 @@ async function listAssetsByUser(req, res) {
 }
 
 async function getAssetDetails(req, res) {
-  assertAnyWriteAssetPermission(req);
+  assertAssetReadAccess(req);
 
   const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")
@@ -462,7 +462,7 @@ function buildAssetLookupQuery(identifier) {
 }
 
 async function getAssetById(req, res) {
-  assertAnyWriteAssetPermission(req);
+  assertAssetReadAccess(req);
 
   const asset = await Asset.findOne(buildAssetLookupQuery(req.params.assetId))
     .populate("product")

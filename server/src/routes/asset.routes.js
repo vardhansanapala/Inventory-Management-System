@@ -23,16 +23,20 @@ const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
+function requireAssetReadAccess(req, res, next) {
+  return requireModuleAccess(MODULE_KEYS.DEVICE_INFO)(req, res, next);
+}
+
 router.get("/qr/:assetId", asyncHandler(getAssetQrCode));
-router.use(requireAuth, requireModuleAccess(MODULE_KEYS.ASSETS));
+router.use(requireAuth);
 router.get("/bootstrap", requireAnyWriteAccess("ASSET"), asyncHandler(getAssetBootstrap));
 router.get("/assigned-devices", requireAnyWriteAccess("ASSET"), asyncHandler(listAssignedDevices));
-router.get("/my-assets", requireAnyWriteAccess("ASSET"), asyncHandler(listMyAssets));
+router.get("/my-assets", requireAssetReadAccess, asyncHandler(listMyAssets));
 router.get("/by-user/:userId", requireRole(USER_ROLES.SUPER_ADMIN), requireAnyWriteAccess("ASSET"), asyncHandler(listAssetsByUser));
-router.get("/", requireAnyWriteAccess("ASSET"), asyncHandler(listAssets));
-router.get("/:assetId/details", requireAnyWriteAccess("ASSET"), asyncHandler(getAssetDetails));
+router.get("/", requireAssetReadAccess, asyncHandler(listAssets));
+router.get("/:assetId/details", requireAssetReadAccess, asyncHandler(getAssetDetails));
 router.get("/:assetId/assign", hasPermission(PERMISSIONS.ASSIGN_ASSET), asyncHandler(getAssetForAssign));
-router.get("/:assetId", requireAnyWriteAccess("ASSET"), asyncHandler(getAssetById));
+router.get("/:assetId", requireAssetReadAccess, asyncHandler(getAssetById));
 router.patch("/:assetId", hasPermission(PERMISSIONS.UPDATE_ASSET), asyncHandler(updateAsset));
 router.delete("/:assetId", hasPermission(PERMISSIONS.DELETE_ASSET), asyncHandler(deleteAsset));
 router.post(

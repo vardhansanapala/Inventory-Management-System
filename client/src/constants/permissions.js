@@ -65,7 +65,11 @@ export function canAccessModule(user, moduleKey) {
     return true;
   }
 
-  if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES || moduleKey === MODULE_KEYS.DEVICE_INFO) {
+  if (moduleKey === MODULE_KEYS.DEVICE_INFO) {
+    return Boolean(user?.role);
+  }
+
+  if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES) {
     return hasAnyWritePermission(user, "ASSET");
   }
 

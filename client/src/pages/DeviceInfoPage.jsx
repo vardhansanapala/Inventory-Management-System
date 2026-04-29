@@ -261,7 +261,7 @@ export function DeviceInfoPage() {
 
       <SectionCard
         title="Device Info"
-        subtitle="Super-admin visibility into all devices, with searchable registry and detailed history."
+        subtitle={user?.role === "SUPER_ADMIN" ? "View all devices with searchable registry and detailed history." : "View your assigned devices with detailed history."}
         actions={<span className="role-chip">{user?.role || "-"}</span>}
       >
         <div className="device-info-toolbar">

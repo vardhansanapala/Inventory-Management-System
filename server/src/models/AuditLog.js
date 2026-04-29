@@ -67,6 +67,16 @@ const AuditLogSchema = new Schema(
       ref: "Location",
       default: null,
     },
+    fromLocationType: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    toLocationType: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     fromAssignee: {
       type: Schema.Types.ObjectId,
       ref: "User",

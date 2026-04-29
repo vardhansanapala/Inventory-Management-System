@@ -182,6 +182,23 @@ function canReadAssetAuditLogs(req) {
   return permissions.includes(PERMISSIONS.ASSIGN_ASSET);
 }
 
+function getHistoryLocationName(location, locationType) {
+  if (location?.name) {
+    return location.name;
+  }
+
+  return String(locationType || "").trim().toUpperCase() === "WFH" ? "WFH" : null;
+}
+
+function isHistoryLocationChanged(log) {
+  const fromLocationId = String(log.fromLocation?._id || log.fromLocation || "");
+  const toLocationId = String(log.toLocation?._id || log.toLocation || "");
+  const fromLocationType = String(log.fromLocationType || "PHYSICAL").trim().toUpperCase();
+  const toLocationType = String(log.toLocationType || "PHYSICAL").trim().toUpperCase();
+
+  return fromLocationId !== toLocationId || fromLocationType !== toLocationType;
+}
+
 async function listAssets(req, res) {
   assertAnyWriteAssetPermission(req);
 
@@ -375,6 +392,9 @@ async function getAssetDetails(req, res) {
   const history = logs.map((log) => {
     const action = String(log.action || "");
     const lower = action.toLowerCase();
+    const locationChanged = isHistoryLocationChanged(log);
+    const fromLocationName = getHistoryLocationName(log.fromLocation, log.fromLocationType);
+    const toLocationName = getHistoryLocationName(log.toLocation, log.toLocationType);
 
     const isRepair = lower.includes("repair");
     const isRental = lower.includes("rent");
@@ -400,8 +420,8 @@ async function getAssetDetails(req, res) {
       reason: log.reason || null,
       description: log.notes || log.customReason || "",
       timestamp: log.timestamp || log.createdAt,
-      fromLocation: log.fromLocation ? { _id: log.fromLocation._id, name: log.fromLocation.name } : null,
-      toLocation: log.toLocation ? { _id: log.toLocation._id, name: log.toLocation.name } : null,
+      fromLocation: locationChanged && fromLocationName ? { name: fromLocationName } : null,
+      toLocation: locationChanged && toLocationName ? { name: toLocationName } : null,
       fromAssignee: log.fromAssignee
         ? { _id: log.fromAssignee._id, firstName: log.fromAssignee.firstName, lastName: log.fromAssignee.lastName, email: log.fromAssignee.email }
         : null,

@@ -181,6 +181,8 @@ async function createAssetWithQr({
           toStatus: asset.status,
           fromLocation: null,
           toLocation: asset.location,
+          fromLocationType: null,
+          toLocationType: asset.locationType,
           fromAssignee: null,
           toAssignee: asset.assignedTo,
           ...(payload.clientActionId ? { clientActionId: payload.clientActionId } : {}),

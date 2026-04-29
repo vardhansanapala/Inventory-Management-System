@@ -100,7 +100,7 @@ function resolveTransferTarget({ refs, payload }) {
 
     return {
       locationType: "WFH",
-      location: refs.location ? refs.location._id : null,
+      location: null,
       wfhAddress: nextWfhAddress,
     };
   }
@@ -170,7 +170,9 @@ function buildTransition({ asset, action, refs, payload }) {
         action: normalizedAction,
         status: asset.status,
         assignedTo: asset.assignedTo,
-        location: transferTarget.location || asset.location,
+        location: transferTarget.locationType === "WFH"
+          ? null
+          : transferTarget.location || asset.location,
         locationType: transferTarget.locationType,
         wfhAddress: transferTarget.wfhAddress,
         metadata: {

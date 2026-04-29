@@ -187,17 +187,28 @@ async function applyAssetAction({
   }
 
   asset.status = transition.status;
-  asset.location = transition.location;
-  if (transition.locationType !== undefined) {
-    asset.locationType = transition.locationType;
-  }
-  if (transition.wfhAddress !== undefined) {
+
+  if (transition.locationType === "WFH") {
+    asset.location = null;
+    asset.locationType = "WFH";
     asset.wfhAddress = transition.wfhAddress;
+  } else if (transition.locationType === "PHYSICAL") {
+    asset.location = transition.location;
+    asset.locationType = "PHYSICAL";
+    asset.wfhAddress = "";
+  } else {
+    asset.location = transition.location;
+    if (transition.wfhAddress !== undefined) {
+      asset.wfhAddress = transition.wfhAddress;
+    }
   }
+
   asset.assignedTo = transition.assignedTo;
   asset.metadata = {
     ...(asset.metadata || {}),
     ...(transition.metadata || {}),
+    locationType: asset.locationType,
+    wfhAddress: asset.wfhAddress,
   };
   asset.lastActionAt = new Date();
   await asset.save({ session });
@@ -219,6 +230,8 @@ async function applyAssetAction({
         toStatus: asset.status,
         fromLocation,
         toLocation: asset.location,
+        fromLocationType,
+        toLocationType: asset.locationType,
         fromAssignee,
         toAssignee: asset.assignedTo,
         ...(clientActionId ? { clientActionId } : {}),

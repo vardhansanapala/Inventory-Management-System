@@ -16,5 +16,8 @@
 
 **Step 8**: Complete & cleanup TODO.md
 
+
 ## Next: Read remaining files for edits, then Step 4.
 
+
+"dev": "concurrently \"npm run dev:server\" \"npm run dev:client\""

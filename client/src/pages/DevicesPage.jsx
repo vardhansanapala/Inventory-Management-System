@@ -14,6 +14,8 @@ import {
 } from "./EmployeeDeviceInfoPage";
 
 const ASSIGNED_STATUS = "ASSIGNED";
+const WFH_LOCATION_FILTER = "WFH";
+const EMPTY_LOCATION_FILTERS = { physicalLocations: [], hasWfhLocation: false };
 
 function formatOwnerName(user) {
   if (!user) return "-";
@@ -36,6 +38,30 @@ function getAssetSearchText(asset) {
     .toLowerCase();
 }
 
+function getUniqueLocations(assignedAssets) {
+  const physicalLocations = new Map();
+  let hasWfhLocation = false;
+
+  assignedAssets.forEach((asset) => {
+    if (isWfhLocation(asset)) {
+      hasWfhLocation = true;
+      return;
+    }
+
+    const locationId = String(asset?.location?._id || "");
+    if (!locationId) {
+      return;
+    }
+
+    physicalLocations.set(locationId, asset.location);
+  });
+
+  return {
+    physicalLocations: Array.from(physicalLocations.values()),
+    hasWfhLocation,
+  };
+}
+
 export function DevicesPage() {
   const { user: currentUser } = useAuth();
 
@@ -43,7 +69,7 @@ export function DevicesPage() {
   const [error, setError] = useState("");
   const [assets, setAssets] = useState([]);
   const [users, setUsers] = useState([]);
-  const [locations, setLocations] = useState([]);
+  const [locations, setLocations] = useState(EMPTY_LOCATION_FILTERS);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("latest");
@@ -101,20 +127,12 @@ export function DevicesPage() {
           ).values()
         )
       );
-      setLocations(
-        Array.from(
-          new Map(
-            assignedAssets
-              .filter((asset) => asset?.location?._id)
-              .map((asset) => [asset.location._id, asset.location])
-          ).values()
-        )
-      );
+      setLocations(getUniqueLocations(assignedAssets));
     } catch (err) {
       setError(err.message || "Unable to load devices.");
       setAssets([]);
       setUsers([]);
-      setLocations([]);
+      setLocations(EMPTY_LOCATION_FILTERS);
     } finally {
       setListLoading(false);
     }
@@ -135,7 +153,9 @@ export function DevicesPage() {
 
     const locationFiltered = selectedLocationId === "ALL"
       ? userFiltered
-      : userFiltered.filter((asset) => String(asset?.location?._id || "") === selectedLocationId);
+      : selectedLocationId === WFH_LOCATION_FILTER
+        ? userFiltered.filter((asset) => isWfhLocation(asset))
+        : userFiltered.filter((asset) => String(asset?.location?._id || "") === selectedLocationId);
 
     return [...locationFiltered].sort((left, right) => {
       const leftTime = getSortableTime(getLastUpdatedValue(left));
@@ -224,11 +244,14 @@ export function DevicesPage() {
             <span>Location</span>
             <select className="input" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>
               <option value="ALL">ALL</option>
-              {locations.map((location) => (
+              {locations.physicalLocations.map((location) => (
                 <option key={location._id} value={location._id}>
                   {location.name}
                 </option>
               ))}
+              {locations.hasWfhLocation ? (
+                <option value={WFH_LOCATION_FILTER}>WFH</option>
+              ) : null}
             </select>
           </label>
           {listLoading ? <span className="table-subtle">Loading...</span> : null}

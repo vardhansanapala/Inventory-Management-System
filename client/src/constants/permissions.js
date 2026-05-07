@@ -108,7 +108,7 @@ export function getVisibleSidebarLinks(user) {
   const links = [
     { to: "/", label: "Dashboard", moduleKey: MODULE_KEYS.DASHBOARD },
     { to: "/assets", label: "Assets", moduleKey: MODULE_KEYS.ASSETS },
-    { to: "/devices", label: "Assigned devices", moduleKey: MODULE_KEYS.DEVICES },
+    // { to: "/devices", label: "Assigned devices", moduleKey: MODULE_KEYS.DEVICES },
     { to: "/device-info", label: "Device Info", moduleKey: MODULE_KEYS.DEVICE_INFO },
     // { to: "/logs", label: "Logs", moduleKey: MODULE_KEYS.LOGS },
     { to: "/setup", label: "Setup", moduleKey: MODULE_KEYS.SETUP },

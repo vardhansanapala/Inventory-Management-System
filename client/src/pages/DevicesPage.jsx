@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getAssetAuditLogs, getAssignedDevices } from "../api/inventory";
+import { LocationBadge } from "../components/LocationBadge";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
 import { useAuth } from "../context/AuthContext";
-import { getAssetId, getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
-import { getFullDateTime, getLastUpdatedValue, getRelativeTime, getSortableTime } from "../utils/date.util";
+import { getAssetId, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
+import { getFullDateTime, getLastUpdatedValue, getSortableTime } from "../utils/date.util";
 import {
   EmployeeDeviceTimelineEvent,
   getEmployeeDeviceName,
@@ -20,10 +21,6 @@ const EMPTY_LOCATION_FILTERS = { physicalLocations: [], hasWfhLocation: false };
 function formatOwnerName(user) {
   if (!user) return "-";
   return `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "-";
-}
-
-function getLocationName(asset) {
-  return getAssetLocationLabel(asset);
 }
 
 function getAssetSearchText(asset) {
@@ -142,6 +139,25 @@ export function DevicesPage() {
     loadAssignedDevices();
   }, [loadAssignedDevices]);
 
+  useEffect(() => {
+    const id = selectedAsset?._id;
+    if (!id) return;
+
+    const latestAsset = assets.find((asset) => String(asset?._id) === String(id));
+    if (!latestAsset) return;
+
+    setSelectedAsset((current) => {
+      if (!current || String(current?._id) !== String(id)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        ...latestAsset,
+      };
+    });
+  }, [assets, selectedAsset?._id]);
+
   const filteredAssets = useMemo(() => {
     const searchFiltered = search
       ? assets.filter((asset) => getAssetSearchText(asset).includes(search))
@@ -186,8 +202,26 @@ export function DevicesPage() {
       setHistoryError("");
       try {
         const logs = await getAssetAuditLogs(id);
+        const sortedLogs = sortEmployeeDeviceLogs(Array.isArray(logs) ? logs : []);
+
         if (!cancelled) {
-          setHistory(sortEmployeeDeviceLogs(Array.isArray(logs) ? logs : []));
+          setHistory(sortedLogs);
+          setAssets((current) => current.map((asset) => (
+            String(asset?._id) === String(id)
+              ? {
+                  ...asset,
+                  recentAuditLogs: sortedLogs,
+                }
+              : asset
+          )));
+          setSelectedAsset((current) => (
+            current && String(current?._id) === String(id)
+              ? {
+                  ...current,
+                  recentAuditLogs: sortedLogs,
+                }
+              : current
+          ));
         }
       } catch (err) {
         if (!cancelled) {
@@ -261,47 +295,51 @@ export function DevicesPage() {
           <div className="page-message">Loading assigned devices...</div>
         ) : (
           <div className="table-wrap">
-            <table className="table devices-table">
+            <table className="table device-info-table">
               <thead>
                 <tr>
                   <th>Asset ID</th>
                   <th>SKU</th>
-                  <th>Assigned To</th>
-                  <th>Location</th>
                   <th>Status</th>
-                  <th>Last Updated</th>
+                  <th>Location</th>
+                  <th>Assigned To</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredAssets.length ? (
                   filteredAssets.map((asset) => (
-                    <tr
-                      key={asset._id}
-                      className={(() => {
-                        const updatedTime = getSortableTime(getLastUpdatedValue(asset));
-                        return ["devices-row", updatedTime && Date.now() - updatedTime <= 5 * 60 * 1000 ? "row-recent" : ""].join(" ").trim();
-                      })()}
-                      onClick={() => setSelectedAsset(asset)}
-                    >
+                    <tr key={asset._id} onClick={() => setSelectedAsset(asset)} className="device-info-row">
                       <td>
                         <strong>{getAssetId(asset) || "-"}</strong>
+                        <div className="table-subtle">{asset.serialNumber || "No serial"}</div>
                       </td>
                       <td>{asset.product?.sku || "-"}</td>
-                      <td>{formatOwnerName(asset.assignedTo)}</td>
-                      <td>{getLocationName(asset)}</td>
                       <td>
                         <StatusPill status={asset.status} />
                       </td>
-                      <td className="table-date">
-                        <span title={getFullDateTime(getLastUpdatedValue(asset))}>
-                          {getRelativeTime(getLastUpdatedValue(asset))}
-                        </span>
+                      <td>
+                        <LocationBadge
+                          status={asset.status}
+                          locationType={asset.locationType}
+                          location={asset.location}
+                        />
+                      </td>
+                      <td>{formatOwnerName(asset.assignedTo)}</td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <button className="button ghost button-rect button-sm" type="button" onClick={() => setSelectedAsset(asset)}>
+                          View
+                        </button>
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6}>{search || selectedUserId !== "ALL" || selectedLocationId !== "ALL" ? "No assigned devices match your filters." : "No assigned devices found."}</td>
+                    <td colSpan={6}>
+                      {search || selectedUserId !== "ALL" || selectedLocationId !== "ALL"
+                        ? "No assigned devices match your filters."
+                        : "No assigned devices found."}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -343,7 +381,11 @@ export function DevicesPage() {
               </div>
               <div className="device-info-kv">
                 <span>Location</span>
-                <strong>{getLocationName(selectedAsset)}</strong>
+                <LocationBadge
+                  status={selectedAsset.status}
+                  locationType={selectedAsset.locationType}
+                  location={selectedAsset.location}
+                />
               </div>
               {isWfhLocation(selectedAsset) ? (
                 <div className="device-info-kv">

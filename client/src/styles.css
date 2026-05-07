@@ -2504,9 +2504,60 @@ textarea:focus {
   border: 1px solid var(--border-soft);
 }
 
-.device-info-history-change-row span {
+.device-info-history-change-label {
   color: var(--text-muted);
   font-size: 0.8rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.badge-sold {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.badge-rented {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.badge-wfh {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.badge-default {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.icon-sold {
+  color: #ef4444;
+}
+
+.icon-rented {
+  color: #f59e0b;
+}
+
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.history-arrow {
+  margin: 0 6px;
+  opacity: 0.6;
 }
 
 @media (max-width: 980px) {
@@ -2632,14 +2683,6 @@ textarea:focus {
 
 .devices-filter-field {
   min-width: 180px;
-}
-
-.devices-table .devices-row {
-  cursor: pointer;
-}
-
-.devices-table .devices-row:hover td {
-  background: var(--primary-soft);
 }
 
 .devices-grouped {

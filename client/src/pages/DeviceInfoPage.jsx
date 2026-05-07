@@ -1,18 +1,61 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { getAssetById, getAssetDetails, getAssets } from "../api/inventory";
+import { LocationBadge, getLocationLabel } from "../components/LocationBadge";
 import { Modal } from "../components/Modal";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { getDisplayAssetStatus } from "../constants/assetWorkflow";
 import { useAuth } from "../context/AuthContext";
-import { getAssetLocationLabel, getAssetWfhAddress, isWfhLocation } from "../utils/asset.util";
+import { getAssetWfhAddress } from "../utils/asset.util";
+import { getLastUpdatedValue, getSortableTime } from "../utils/date.util";
 
 const HISTORY_PREVIEW_COUNT = 5;
+const WFH_LOCATION_FILTER = "WFH";
+const ALL_FILTER_VALUE = "ALL";
+const ADMIN_FETCH_LIMIT = 1000;
 
 function formatUser(user) {
   if (!user) return "-";
   return `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "-";
+}
+
+function getAssetSearchText(asset) {
+  return [
+    asset?.assetId,
+    asset?.product?.sku,
+    formatUser(asset?.assignedTo),
+    asset?.assignedTo?.email,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function isWfhLocation(asset) {
+  return String(asset?.locationType || "").trim().toUpperCase() === "WFH";
+}
+
+function getUniqueLocations(assets = []) {
+  const physicalLocations = new Map();
+  let hasWfhLocation = false;
+
+  assets.forEach((asset) => {
+    if (isWfhLocation(asset)) {
+      hasWfhLocation = true;
+      return;
+    }
+
+    const locationId = String(asset?.location?._id || "");
+    if (!locationId) return;
+    physicalLocations.set(locationId, asset.location);
+  });
+
+  return {
+    physicalLocations: Array.from(physicalLocations.values()),
+    hasWfhLocation,
+  };
 }
 
 function formatActionLabel(action) {
@@ -39,31 +82,55 @@ function sortHistoryEntries(history = []) {
   });
 }
 
+function areValuesEqual(fromValue, toValue) {
+  return String(fromValue ?? "").trim() === String(toValue ?? "").trim();
+}
+
+function getAssigneeIdentity(user) {
+  return String(user?._id || user?.email || `${user?.firstName || ""} ${user?.lastName || ""}`)
+    .trim();
+}
+
 function buildChangeRows(event) {
   const rows = [];
 
   if (event.from?.status || event.to?.status) {
-    rows.push({
-      label: "Status",
-      from: getDisplayAssetStatus(event.from?.status),
-      to: getDisplayAssetStatus(event.to?.status),
-    });
+    const fromStatus = event.from?.status || null;
+    const toStatus = event.to?.status || null;
+
+    if (!areValuesEqual(fromStatus, toStatus)) {
+      rows.push({
+        label: "Status",
+        from: fromStatus ? getDisplayAssetStatus(fromStatus) : "-",
+        to: toStatus ? getDisplayAssetStatus(toStatus) : "-",
+      });
+    }
   }
 
-  if (event.fromLocation || event.toLocation) {
-    rows.push({
-      label: "Location",
-      from: event.fromLocation?.name || "-",
-      to: event.toLocation?.name || "-",
-    });
+  if (event.fromLocation || event.toLocation || event.from?.status || event.to?.status) {
+    const fromLocation = getLocationLabel(event.fromLocation, event.fromLocationType, event.from?.status);
+    const toLocation = getLocationLabel(event.toLocation, event.toLocationType, event.to?.status);
+
+    if (!areValuesEqual(fromLocation, toLocation)) {
+      rows.push({
+        label: "Location",
+        from: fromLocation || "-",
+        to: toLocation || "-",
+      });
+    }
   }
 
   if (event.fromAssignee || event.toAssignee) {
-    rows.push({
-      label: "Assignee",
-      from: formatUser(event.fromAssignee),
-      to: formatUser(event.toAssignee),
-    });
+    const fromAssignee = event.fromAssignee || null;
+    const toAssignee = event.toAssignee || null;
+
+    if (!areValuesEqual(getAssigneeIdentity(fromAssignee), getAssigneeIdentity(toAssignee))) {
+      rows.push({
+        label: "Assignee",
+        from: fromAssignee ? formatUser(fromAssignee) : "-",
+        to: toAssignee ? formatUser(toAssignee) : "-",
+      });
+    }
   }
 
   return rows;
@@ -108,10 +175,26 @@ function HistoryEvent({ event, isLatest = false }) {
           <div className="device-info-history-change-list">
             {changes.map((change) => (
               <div key={change.label} className="device-info-history-change-row">
-                <span>{change.label}</span>
-                <strong>
-                  {change.from} to {change.to}
-                </strong>
+                <span className="device-info-history-change-label">{change.label}</span>
+                {change.label === "Location" ? (
+                  <div className="change-row">
+                    <LocationBadge
+                      status={event.from?.status}
+                      locationType={event.fromLocationType}
+                      location={event.fromLocation}
+                    />
+                    <ArrowRight size={14} className="history-arrow" />
+                    <LocationBadge
+                      status={event.to?.status}
+                      locationType={event.toLocationType}
+                      location={event.toLocation}
+                    />
+                  </div>
+                ) : (
+                  <strong>
+                    {change.from} to {change.to}
+                  </strong>
+                )}
               </div>
             ))}
           </div>
@@ -123,10 +206,14 @@ function HistoryEvent({ event, isLatest = false }) {
 
 export function DeviceInfoPage() {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const { assetId: routeAssetId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("latest");
+  const [selectedUserId, setSelectedUserId] = useState(ALL_FILTER_VALUE);
+  const [selectedLocationId, setSelectedLocationId] = useState(ALL_FILTER_VALUE);
   const [page, setPage] = useState(1);
   const limit = 10;
 
@@ -161,12 +248,6 @@ export function DeviceInfoPage() {
     return () => window.clearTimeout(debounceRef.current);
   }, [searchInput]);
 
-  const pageLabel = useMemo(() => {
-    const safeTotalPages = Math.max(totalPages || 1, 1);
-    const safePage = Math.min(Math.max(page, 1), safeTotalPages);
-    return `Page ${safePage} of ${safeTotalPages}`;
-  }, [page, totalPages]);
-
   const hasHiddenHistory = selectedAssetHistory.length > HISTORY_PREVIEW_COUNT;
   const visibleHistory = historyExpanded ? selectedAssetHistory : selectedAssetHistory.slice(0, HISTORY_PREVIEW_COUNT);
 
@@ -174,7 +255,11 @@ export function DeviceInfoPage() {
     setLoading(true);
     setError("");
     try {
-      const result = await getAssets({ page, limit, search });
+      const result = await getAssets({
+        page: isSuperAdmin ? 1 : page,
+        limit: isSuperAdmin ? ADMIN_FETCH_LIMIT : limit,
+        search: isSuperAdmin ? "" : search,
+      });
       setAssets(Array.isArray(result?.data) ? result.data : []);
       setTotal(Number(result?.total) || 0);
       setTotalPages(Number(result?.totalPages) || 1);
@@ -188,7 +273,65 @@ export function DeviceInfoPage() {
 
   useEffect(() => {
     fetchAssets();
-  }, [page, search]);
+  }, [isSuperAdmin, page, search]);
+
+  const filterUsers = useMemo(() => (
+    Array.from(
+      new Map(
+        assets
+          .filter((asset) => asset?.assignedTo?._id)
+          .map((asset) => [asset.assignedTo._id, asset.assignedTo])
+      ).values()
+    )
+  ), [assets]);
+
+  const filterLocations = useMemo(() => getUniqueLocations(assets), [assets]);
+
+  const filteredAssets = useMemo(() => {
+    if (!isSuperAdmin) {
+      return assets;
+    }
+
+    const normalizedSearch = search.trim().toLowerCase();
+
+    const searchFiltered = normalizedSearch
+      ? assets.filter((asset) => getAssetSearchText(asset).includes(normalizedSearch))
+      : assets;
+
+    const userFiltered = selectedUserId === ALL_FILTER_VALUE
+      ? searchFiltered
+      : searchFiltered.filter((asset) => String(asset?.assignedTo?._id || "") === selectedUserId);
+
+    const locationFiltered = selectedLocationId === ALL_FILTER_VALUE
+      ? userFiltered
+      : selectedLocationId === WFH_LOCATION_FILTER
+        ? userFiltered.filter((asset) => isWfhLocation(asset))
+        : userFiltered.filter((asset) => String(asset?.location?._id || "") === selectedLocationId);
+
+    return [...locationFiltered].sort((left, right) => {
+      const leftTime = getSortableTime(getLastUpdatedValue(left));
+      const rightTime = getSortableTime(getLastUpdatedValue(right));
+      return sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
+    });
+  }, [assets, isSuperAdmin, search, selectedLocationId, selectedUserId, sort]);
+
+  const displayTotal = isSuperAdmin ? filteredAssets.length : total;
+  const displayTotalPages = isSuperAdmin ? Math.max(Math.ceil(filteredAssets.length / limit), 1) : totalPages;
+  const renderedAssets = isSuperAdmin
+    ? filteredAssets.slice((page - 1) * limit, page * limit)
+    : filteredAssets;
+
+  const pageLabel = useMemo(() => {
+    const safeTotalPages = Math.max(displayTotalPages || 1, 1);
+    const safePage = Math.min(Math.max(page, 1), safeTotalPages);
+    return `Page ${safePage} of ${safeTotalPages}`;
+  }, [displayTotalPages, page]);
+
+  useEffect(() => {
+    if (page > displayTotalPages) {
+      setPage(displayTotalPages);
+    }
+  }, [displayTotalPages, page]);
 
   useEffect(() => {
     const requestedAssetId = String(searchParams.get("assetId") || routeAssetId || "").trim();
@@ -253,7 +396,7 @@ export function DeviceInfoPage() {
   }
 
   const canPrev = page > 1;
-  const canNext = page < totalPages;
+  const canNext = page < displayTotalPages;
 
   return (
     <div className="page-stack">
@@ -265,15 +408,71 @@ export function DeviceInfoPage() {
         actions={<span className="role-chip">{user?.role || "-"}</span>}
       >
         <div className="device-info-toolbar">
-          <input
-            className="input"
-            placeholder="Search by Asset Id or SKU or Serial Number"
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-          />
+          {isSuperAdmin ? (
+            <div className="devices-toolbar devices-toolbar-flat">
+              <input
+                className="input"
+                placeholder="Search by asset ID, SKU, or user..."
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                aria-label="Search devices"
+              />
+              <label className="field-stack devices-filter-field">
+                <span>Sort</span>
+                <select
+                  className="input"
+                  value={sort}
+                  onChange={(event) => {
+                    setSort(event.target.value);
+                    setPage(1);
+                  }}
+                >
+                  <option value="latest">Latest</option>
+                  <option value="oldest">Oldest</option>
+                </select>
+              </label>
+              <label className="field-stack devices-filter-field">
+                <span>User</span>
+                <select
+                  className="input"
+                  value={selectedUserId}
+                  onChange={(event) => {
+                    setSelectedUserId(event.target.value);
+                    setPage(1);
+                  }}
+                >
+                  <option value={ALL_FILTER_VALUE}>ALL</option>
+                  {filterUsers.map((targetUser) => (
+                    <option key={targetUser._id} value={targetUser._id}>
+                      {formatUser(targetUser)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-stack devices-filter-field">
+                <span>Location</span>
+                <select
+                  className="input"
+                  value={selectedLocationId}
+                  onChange={(event) => {
+                    setSelectedLocationId(event.target.value);
+                    setPage(1);
+                  }}
+                >
+                  <option value={ALL_FILTER_VALUE}>ALL</option>
+                  {filterLocations.physicalLocations.map((location) => (
+                    <option key={location._id} value={location._id}>
+                      {location.name}
+                    </option>
+                  ))}
+                  {filterLocations.hasWfhLocation ? <option value={WFH_LOCATION_FILTER}>WFH</option> : null}
+                </select>
+              </label>
+            </div>
+          ) : null}
           <div className="device-info-pagination">
             <span className="table-subtle">
-              {pageLabel} | {total} devices{loading ? " | Loading..." : ""}
+              {pageLabel} | {displayTotal} devices{loading ? " | Loading..." : ""}
             </span>
             <div className="inline-form">
               <button className="button ghost button-rect" type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={!canPrev}>
@@ -303,8 +502,9 @@ export function DeviceInfoPage() {
                 <tr>
                   <td colSpan={6}>Loading devices...</td>
                 </tr>
-              ) : assets.length ? (
-                assets.map((asset) => (
+              ) : renderedAssets.length ? (
+                renderedAssets.map((asset) => {
+                  return (
                   <tr key={asset._id} onClick={() => openDetails(asset)} className="device-info-row">
                     <td>
                       <strong>{asset.assetId}</strong>
@@ -314,7 +514,13 @@ export function DeviceInfoPage() {
                     <td>
                       <StatusPill status={asset.status} />
                     </td>
-                    <td>{getAssetLocationLabel(asset)}</td>
+                    <td>
+                      <LocationBadge
+                        status={asset.status}
+                        locationType={asset.locationType}
+                        location={asset.location}
+                      />
+                    </td>
                     <td>{asset.assignedTo ? `${asset.assignedTo.firstName} ${asset.assignedTo.lastName}` : "-"}</td>
                     <td onClick={(event) => event.stopPropagation()}>
                       <button className="button ghost button-rect button-sm" type="button" onClick={() => openDetails(asset)}>
@@ -322,7 +528,8 @@ export function DeviceInfoPage() {
                       </button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={6}>No results found</td>
@@ -339,15 +546,17 @@ export function DeviceInfoPage() {
           title="Device Details"
           subtitle={selectedAssetDetails?.assetId ? `History for ${selectedAssetDetails.assetId}` : selectedAssetId ? `Loading ${selectedAssetId}...` : ""}
           onClose={closeDetails}
-          actions={
-            <button className="button ghost button-rect" type="button" onClick={closeDetails}>
-              Close
-            </button>
-          }
         >
           {detailsLoading ? <div className="page-message">Loading details...</div> : null}
 
-          {selectedAssetDetails ? (
+          {selectedAssetDetails ? (() => {
+            const selectedLocationLabel = getLocationLabel(
+              selectedAssetDetails.location,
+              selectedAssetDetails.locationType,
+              selectedAssetDetails.status
+            );
+
+            return (
             <div className="device-info-modal-grid">
               <div className="device-info-panel">
                 <strong className="device-info-panel-title">Device Info</strong>
@@ -369,9 +578,13 @@ export function DeviceInfoPage() {
                 </div>
                 <div className="device-info-kv">
                   <span>Location</span>
-                  <strong>{getAssetLocationLabel(selectedAssetDetails)}</strong>
+                  <LocationBadge
+                    status={selectedAssetDetails.status}
+                    locationType={selectedAssetDetails.locationType}
+                    location={selectedAssetDetails.location}
+                  />
                 </div>
-                {isWfhLocation(selectedAssetDetails) ? (
+                {selectedLocationLabel === "WFH" ? (
                   <div className="device-info-kv">
                     <span>Address</span>
                     <strong>{getAssetWfhAddress(selectedAssetDetails) || "-"}</strong>
@@ -419,7 +632,8 @@ export function DeviceInfoPage() {
                 )}
               </div>
             </div>
-          ) : null}
+            );
+          })() : null}
         </Modal>
       ) : null}
     </div>

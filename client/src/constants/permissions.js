@@ -7,6 +7,7 @@ export const MODULE_KEYS = {
   LOGS: "logs",
   SETUP: "setup",
   USERS: "users",
+  SETTINGS: "settings",
   DEVICE_INFO: "deviceInfo",
 };
 
@@ -69,6 +70,10 @@ export function canAccessModule(user, moduleKey) {
     return Boolean(user?.role);
   }
 
+  if (moduleKey === MODULE_KEYS.SETTINGS) {
+    return user?.role === ROLES.SUPER_ADMIN;
+  }
+
   if (moduleKey === MODULE_KEYS.ASSETS || moduleKey === MODULE_KEYS.DEVICES) {
     return hasAnyWritePermission(user, "ASSET");
   }
@@ -113,6 +118,7 @@ export function getVisibleSidebarLinks(user) {
     // { to: "/logs", label: "Logs", moduleKey: MODULE_KEYS.LOGS },
     { to: "/setup", label: "Setup", moduleKey: MODULE_KEYS.SETUP },
     { to: "/users", label: "Users", moduleKey: MODULE_KEYS.USERS },
+    { to: "/settings", label: "Security", moduleKey: MODULE_KEYS.SETTINGS },
   ];
 
   return links.filter((link) => {

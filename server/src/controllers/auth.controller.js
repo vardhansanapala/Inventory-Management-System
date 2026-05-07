@@ -1,11 +1,30 @@
 const { User } = require("../models/User");
-const { USER_STATUSES } = require("../constants/asset.constants");
+const env = require("../config/env");
+const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 const { ApiError } = require("../utils/ApiError");
 const { comparePassword } = require("../utils/password");
 const { signAuthToken } = require("../utils/jwt");
 const { toPublicUser } = require("../utils/userSerializer");
 
+async function assertApplicationInitialized() {
+  const hasSuperAdmin = await User.exists({
+    role: USER_ROLES.SUPER_ADMIN,
+    isDeleted: false,
+    isActive: true,
+    status: { $in: [USER_STATUSES.ACTIVE, null] },
+  });
+
+  if (!hasSuperAdmin) {
+    throw new ApiError(503, "Application setup is incomplete. Contact an administrator to enable bootstrap configuration.", {
+      code: "APP_UNINITIALIZED",
+      bootstrapEnabled: env.enableBootstrap,
+    });
+  }
+}
+
 async function login(req, res) {
+  await assertApplicationInitialized();
+
   const email = String(req.body.email || "").trim().toLowerCase();
   const password = String(req.body.password || "").trim();
 

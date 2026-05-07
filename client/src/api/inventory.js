@@ -11,6 +11,20 @@ export function getCurrentUser() {
   return request("/auth/me");
 }
 
+export function updateSuperAdminProfile(payload) {
+  return request("/super-admin/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSuperAdminPassword(payload) {
+  return request("/super-admin/password", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getDashboardSummary() {
   return request("/dashboard/summary");
 }

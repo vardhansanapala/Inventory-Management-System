@@ -6,6 +6,7 @@ const deviceRoutes = require("./device.routes");
 const importRoutes = require("./import.routes");
 const logRoutes = require("./log.routes");
 const setupRoutes = require("./setup.routes");
+const superAdminRoutes = require("./superAdmin.routes");
 const syncRoutes = require("./sync.routes");
 const userRoutes = require("./user.routes");
 
@@ -20,5 +21,6 @@ router.use("/assets", assetRoutes);
 router.use("/imports", importRoutes);
 router.use("/sync", syncRoutes);
 router.use("/users", userRoutes);
+router.use("/super-admin", superAdminRoutes);
 
 module.exports = router;

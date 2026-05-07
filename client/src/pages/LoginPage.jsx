@@ -7,7 +7,8 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const { user, login, loading: authLoading } = useAuth();
+  const [errorCode, setErrorCode] = useState("");
+  const { user, login, loading: authLoading, authError } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const nextPath = location.state?.from || "/";
@@ -20,6 +21,7 @@ export function LoginPage() {
     event.preventDefault();
     setSubmitting(true);
     setError("");
+    setErrorCode("");
 
     const result = await login(email, password);
 
@@ -27,6 +29,7 @@ export function LoginPage() {
       navigate(nextPath, { replace: true });
     } else {
       setError(result.error || "Login failed");
+      setErrorCode(result.code || "");
     }
 
     setSubmitting(false);
@@ -41,7 +44,14 @@ export function LoginPage() {
       <div className="login-card">
         <h1>Login to Inventory</h1>
         <p>Sign in with your assigned account. Paused accounts cannot access the system.</p>
-        {error ? <div className="page-message error">{error}</div> : null}
+        {authError?.code === "APP_UNINITIALIZED" && !error ? (
+          <div className="page-message error">{authError.message}</div>
+        ) : null}
+        {error ? (
+          <div className={`page-message error login-error-${String(errorCode || "generic").toLowerCase()}`}>
+            {error}
+          </div>
+        ) : null}
         <form onSubmit={handleSubmit}>
           <input
             className="input"

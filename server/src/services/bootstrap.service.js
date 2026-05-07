@@ -2,83 +2,60 @@ const env = require("../config/env");
 const { USER_ROLES, USER_STATUSES } = require("../constants/asset.constants");
 const { getRoleDefaults } = require("../constants/permissions");
 const { User } = require("../models/User");
-const { comparePassword, hashPassword } = require("../utils/password");
+const { hashPassword } = require("../utils/password");
+const { assertStrongPassword } = require("../utils/passwordPolicy");
 
 async function ensureDefaultSuperAdmin() {
-  const email = env.defaultSuperAdminEmail.toLowerCase().trim();
-
-  let user = await User.findOne({ email }).select("+passwordHash");
-
-  if (!user) {
-    const passwordHash = await hashPassword(env.defaultSuperAdminPassword);
-    const defaults = getRoleDefaults(USER_ROLES.SUPER_ADMIN);
-    user = await User.create({
-      firstName: "System",
-      lastName: "Super Admin",
-      email,
-      employeeCode: "SYS-ADMIN",
-      role: USER_ROLES.SUPER_ADMIN,
-      permissions: defaults.permissions,
-      manageableRoles: defaults.manageableRoles,
-      passwordHash,
-      isActive: true,
-      status: USER_STATUSES.ACTIVE,
-    });
-
-    console.log(`Default super admin created for ${email}`);
-    return user;
+  if (!env.enableBootstrap) {
+    console.log("Bootstrap disabled. Skipping super admin initialization.");
+    return null;
   }
 
-  let requiresSave = false;
+  const existingSuperAdmin = await User.findOne({
+    role: USER_ROLES.SUPER_ADMIN,
+  });
 
-  if (user.role !== USER_ROLES.SUPER_ADMIN) {
-    user.role = USER_ROLES.SUPER_ADMIN;
-    requiresSave = true;
+  if (existingSuperAdmin) {
+    console.log("Super admin already exists. Skipping bootstrap initialization.");
+    return existingSuperAdmin;
+  }
+
+  const email = env.defaultSuperAdminEmail.toLowerCase().trim();
+  const firstName = env.defaultSuperAdminFirstName.trim();
+  const lastName = env.defaultSuperAdminLastName.trim();
+  const employeeCode = env.defaultSuperAdminEmployeeCode.trim();
+
+  if (!email || !env.defaultSuperAdminPassword || !firstName || !lastName || !employeeCode) {
+    throw new Error(
+      "Bootstrap is enabled but DEFAULT_SUPER_ADMIN_EMAIL, DEFAULT_SUPER_ADMIN_PASSWORD, DEFAULT_SUPER_ADMIN_FIRST_NAME, DEFAULT_SUPER_ADMIN_LAST_NAME, and DEFAULT_SUPER_ADMIN_EMPLOYEE_CODE are required."
+    );
+  }
+
+  assertStrongPassword(env.defaultSuperAdminPassword);
+
+  const existingEmailUser = await User.findOne({ email, isDeleted: false });
+  if (existingEmailUser) {
+    throw new Error(
+      `Bootstrap cannot create a super admin because ${email} is already assigned to a non-super-admin user.`
+    );
   }
 
   const defaults = getRoleDefaults(USER_ROLES.SUPER_ADMIN);
-  if (!Array.isArray(user.permissions) || user.permissions.length === 0) {
-    user.permissions = defaults.permissions;
-    requiresSave = true;
-  }
+  const passwordHash = await hashPassword(env.defaultSuperAdminPassword);
+  const user = await User.create({
+    firstName,
+    lastName,
+    email,
+    employeeCode,
+    role: USER_ROLES.SUPER_ADMIN,
+    permissions: defaults.permissions,
+    manageableRoles: defaults.manageableRoles,
+    passwordHash,
+    isActive: true,
+    status: USER_STATUSES.ACTIVE,
+  });
 
-  if (!Array.isArray(user.manageableRoles) || user.manageableRoles.length === 0) {
-    user.manageableRoles = defaults.manageableRoles;
-    requiresSave = true;
-  }
-
-  if (!user.passwordHash) {
-    user.passwordHash = await hashPassword(env.defaultSuperAdminPassword);
-    requiresSave = true;
-  }
-
-  if (env.resetSuperAdminPasswordOnBoot) {
-    const passwordMatchesDefault = await comparePassword(
-      env.defaultSuperAdminPassword,
-      user.passwordHash
-    );
-    if (!passwordMatchesDefault) {
-      user.passwordHash = await hashPassword(env.defaultSuperAdminPassword);
-      requiresSave = true;
-    }
-  }
-
-  if (!user.isActive) {
-    user.isActive = true;
-    requiresSave = true;
-  }
-
-  if (user.status !== USER_STATUSES.ACTIVE) {
-    user.status = USER_STATUSES.ACTIVE;
-    user.isDeleted = false;
-    requiresSave = true;
-  }
-
-  if (requiresSave) {
-    await user.save();
-    console.log(`Default super admin credentials refreshed for ${email}`);
-  }
-
+  console.log(`Default super admin created for ${email}`);
   return user;
 }
 

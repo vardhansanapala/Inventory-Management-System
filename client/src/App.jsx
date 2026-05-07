@@ -20,6 +20,7 @@ import { DeviceInfoPage } from "./pages/DeviceInfoPage";
 import { DevicesPage } from "./pages/DevicesPage";
 import { AssignDevicePage } from "./pages/AssignDevicePage";
 import { ScanRedirectPage } from "./pages/ScanRedirectPage";
+import { SuperAdminSettingsPage } from "./pages/SuperAdminSettingsPage";
 import { useAuth } from "./context/AuthContext";
 import { ROLES } from "./constants/roles";
 
@@ -104,6 +105,14 @@ export default function App() {
           element={
             <ProtectedRoute moduleKey={MODULE_KEYS.USERS}>
               <UserCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN]}>
+              <SuperAdminSettingsPage />
             </ProtectedRoute>
           }
         />

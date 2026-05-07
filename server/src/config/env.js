@@ -18,7 +18,7 @@ module.exports = {
   awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
   redisUrl: process.env.REDIS_URL || "redis://127.0.0.1:6379",
   queueEnabled: process.env.QUEUE_ENABLED !== "false",
-  jwtSecret: process.env.JWT_SECRET || "replace-me",
+  jwtSecret: process.env.JWT_SECRET,
   defaultSuperAdminEmail:
     process.env.DEFAULT_SUPER_ADMIN_EMAIL || "superadmin@company.com",
   defaultSuperAdminPassword:

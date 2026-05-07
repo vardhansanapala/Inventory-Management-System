@@ -79,10 +79,13 @@ export function UsersPage() {
   const resetFeedback = useActionFeedback();
   const deleteFeedback = useActionFeedback();
 
-  const resetPasswordErrors = getPasswordErrors(passwordForm.password, passwordForm.confirmPassword);
+  const resetPasswordErrors = useMemo(
+    () => getPasswordErrors(passwordForm.password, passwordForm.confirmPassword),
+    [passwordForm.password, passwordForm.confirmPassword]
+  );
   const resetFormValid = useMemo(() => {
-    return passwordForm.password.length >= 6 && passwordForm.password === passwordForm.confirmPassword;
-  }, [passwordForm]);
+    return Object.keys(resetPasswordErrors).length === 0;
+  }, [resetPasswordErrors]);
 
   useEffect(() => {
     const id = window.setInterval(() => {

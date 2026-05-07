@@ -5,6 +5,10 @@ import { PERMISSIONS, ROLE_DEFAULTS, hasPermission } from "../../constants/permi
 import { ROLES } from "../../constants/roles";
 import { useAuth } from "../../context/AuthContext";
 import { useActionFeedback } from "../../hooks/useActionFeedback";
+import {
+  generateStrongPassword as generatePolicyPassword,
+  getPasswordValidationErrors,
+} from "../../utils/password.util";
 
 export const USER_STATUSES = {
   ACTIVE: "ACTIVE",
@@ -63,23 +67,19 @@ const PERMISSION_GROUPS = [
 const ALL_PERMISSIONS = Array.from(new Set(PERMISSION_GROUPS.flatMap((group) => group.permissions)));
 
 export function getPasswordErrors(password, confirmPassword) {
-  const errors = {};
+  const errors = getPasswordValidationErrors({
+    newPassword: password,
+    confirmPassword,
+  });
 
-  if (password.length < 6) {
-    errors.password = "Password must be at least 6 characters.";
-  }
-
-  if (confirmPassword && password !== confirmPassword) {
-    errors.confirmPassword = "Passwords must match.";
-  }
-
-  return errors;
+  return {
+    ...(errors.newPassword ? { password: errors.newPassword.replace("New password", "Password") } : {}),
+    ...(errors.confirmPassword ? { confirmPassword: errors.confirmPassword.replace("New password and confirm password", "Passwords") } : {}),
+  };
 }
 
 export function generateStrongPassword() {
-  const charset = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*";
-  const length = 12;
-  return Array.from({ length }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
+  return generatePolicyPassword();
 }
 
 export function formatTimestamp(value) {
@@ -106,7 +106,7 @@ export function PasswordField({
   visible,
   onToggle,
   error,
-  placeholder = "Add at least 6 characters",
+  placeholder = "Add at least 8 characters with atleast one uppercase letter, one lowercase letter, one number, and one special character.",
   autoComplete = "new-password",
 }) {
   return (
@@ -213,16 +213,18 @@ export function UserCreateForm({ onCreated }) {
   const [createManageableRoles, setCreateManageableRoles] = useState([]);
   const [createPermissions, setCreatePermissions] = useState([]);
 
-  const createPasswordErrors = getPasswordErrors(createForm.password, createForm.confirmPassword);
+  const createPasswordErrors = useMemo(
+    () => getPasswordErrors(createForm.password, createForm.confirmPassword),
+    [createForm.password, createForm.confirmPassword]
+  );
   const createFormValid = useMemo(() => {
     return (
       Boolean(createForm.firstName.trim()) &&
       Boolean(createForm.lastName.trim()) &&
       Boolean(createForm.email.trim()) &&
-      createForm.password.length >= 6 &&
-      createForm.password === createForm.confirmPassword
+      Object.keys(createPasswordErrors).length === 0
     );
-  }, [createForm]);
+  }, [createForm, createPasswordErrors]);
 
   useEffect(() => {
     if (!isSuperAdmin) return;

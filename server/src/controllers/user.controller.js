@@ -5,6 +5,7 @@ const { createUserAuditLog } = require("../services/userAudit.service");
 const { PERMISSIONS, getRoleDefaults } = require("../constants/permissions");
 const { ApiError } = require("../utils/ApiError");
 const { hashPassword } = require("../utils/password");
+const { assertStrongPassword } = require("../utils/passwordPolicy");
 const { toPublicUser } = require("../utils/userSerializer");
 const { RBAC_AUDIT_TARGET_TYPES, RbacAuditLog } = require("../models/RbacAuditLog");
 
@@ -40,12 +41,6 @@ function normalizeEmail(value) {
 
 function normalizeStatus(value) {
   return String(value || "").trim().toUpperCase();
-}
-
-function requireValidPassword(password, fieldName = "Password") {
-  if (password.length < 6) {
-    throw new ApiError(400, `${fieldName} must be at least 6 characters`);
-  }
 }
 
 function buildUserSnapshot(user) {
@@ -130,7 +125,7 @@ async function createUser(req, res) {
     throw new ApiError(403, "You are not allowed to create users with this role");
   }
 
-  requireValidPassword(password);
+  assertStrongPassword(password);
   await ensureEmailAvailable(email);
 
   const defaults = getRoleDefaults(role);
@@ -454,7 +449,7 @@ async function resetUserPassword(req, res) {
   }
 
   const newPassword = String(req.body.password || req.body.newPassword || "");
-  requireValidPassword(newPassword, "New password");
+  assertStrongPassword(newPassword);
 
   user.passwordHash = await hashPassword(newPassword);
   await user.save();
